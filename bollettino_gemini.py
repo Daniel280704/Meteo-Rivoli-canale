@@ -99,12 +99,26 @@ def main():
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     
     if token and chat_id:
-        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
+        # Invia a Gemini e poi a Telegram
+    bollettino = interpella_gemini(report, info_giornaliere)
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    
+    if token and chat_id:
+        # Ora salviamo la risposta di Telegram
+        risposta_tg = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
                       data={"chat_id": chat_id, "text": bollettino, "parse_mode": "Markdown"})
-        print("Bollettino inviato con successo.")
+        
+        # E controlliamo se è andata a buon fine
+        if risposta_tg.status_code == 200:
+            print("Bollettino inviato con successo al canale!")
+        else:
+            print(f"ERRORE TELEGRAM - Codice: {risposta_tg.status_code}")
+            print(f"Motivo esatto: {risposta_tg.text}")
+            print("\n--- TESTO CHE HA CAUSATO L'ERRORE ---\n")
+            print(bollettino)
     else:
-        print("\n--- ANTEPRIMA BOLLETTINO ---\n")
-        print(bollettino)
+        print("Errore: Non trovo i Secrets (Token o Chat ID)!")
 
 if __name__ == "__main__":
     main()
