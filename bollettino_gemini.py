@@ -18,6 +18,7 @@ LON = 7.5157
 def interpella_gemini(dati_meteo, info_giornaliere):
     api_key = os.getenv("GEMINI_API_KEY")
     genai.configure(api_key=api_key)
+    # MODELLO AGGIORNATO (Versione 1.5)
     model = genai.GenerativeModel('models/gemini-3.5-flash')
     
     oggi_str = datetime.now().strftime("%A %d %B")
@@ -99,17 +100,9 @@ def main():
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     
     if token and chat_id:
-        # Invia a Gemini e poi a Telegram
-    bollettino = interpella_gemini(report, info_giornaliere)
-    token = os.getenv("TELEGRAM_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    
-    if token and chat_id:
-        # Ora salviamo la risposta di Telegram
         risposta_tg = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
                       data={"chat_id": chat_id, "text": bollettino, "parse_mode": "Markdown"})
         
-        # E controlliamo se è andata a buon fine
         if risposta_tg.status_code == 200:
             print("Bollettino inviato con successo al canale!")
         else:
