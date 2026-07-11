@@ -17,7 +17,7 @@ LON = 7.543472
 def interpella_gemini(dati_tendenza):
     api_key = os.getenv("GEMINI_API_KEY")
     genai.configure(api_key=api_key)
-    # Usiamo il modello con limiti ampi, perfetto per i riassunti
+    # Modello con limiti ampi per gestire la tendenza
     model = genai.GenerativeModel('models/gemini-3-flash-preview')    
 
     oggi = datetime.now()
@@ -36,13 +36,13 @@ def interpella_gemini(dati_tendenza):
        - Tra NOVEMBRE e FEBBRAIO: parla solo di "piogge" o "precipitazioni" (vietato parlare di temporali).
        
     REGOLE DI DISAGIO TERMICO E NEVE (SINTESI):
-    4. Se la T.Max supera i 30°C, accenna a un possibile aumento dell'afa e del disagio termico nelle ore centrali.
-    5. Se la T.Min scende sotto o vicino allo zero (<= 2°C), avvisa del rischio di gelate o, in caso di precipitazioni previste, di fiocchi a bassa quota.
+    4. Se la T.Max Media supera i 30°C, accenna a un possibile aumento dell'afa e del disagio termico nelle ore centrali.
+    5. Se la T.Min Media scende sotto o vicino allo zero (<= 2°C), avvisa del rischio di gelate o, in caso di precipitazioni previste, di fiocchi a bassa quota.
 
     DIVIETO ASSOLUTO SUI TERMINI TECNICI:
-    6. È severamente VIETATO menzionare i nomi delle colonne ("T.Min", "T.Max", "Prec"). L'utente non deve MAI leggere questi acronimi. Traduci i numeri in un discorso naturale (es. "le massime sfioreranno i 35 gradi", "accumuli pluviometrici").
+    6. È severamente VIETATO menzionare i nomi delle colonne ("T.Min", "T.Max", "Prec"). L'utente non deve MAI leggere questi acronimi. Traduci i numeri in un discorso naturale.
 
-    DATI SINTETICI GIORNALIERI (Usa ESCLUSIVAMENTE questi per la tendenza):
+    DATI SINTETICI GIORNALIERI (Basati sulla Media degli Scenari Ensemble):
     {dati_tendenza}
     """
 
@@ -53,19 +53,34 @@ def interpella_gemini(dati_tendenza):
         return f"Errore AI: {e}"
 
 def main():
-    # Usiamo icon_seamless che unisce in automatico ICON-D2, ICON-EU e ICON-CH2
-    dati = requests.get("https://api.open-meteo.com/v1/forecast", params={
-        "latitude": LAT, "longitude": LON,
+    # Interroghiamo l'API ENSEMBLE di Open-Meteo per ottenere tutti gli scenari
+    url = "https://ensemble-api.open-meteo.com/v1/ensemble"
+    params = {
+        "latitude": LAT, 
+        "longitude": LON,
         "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max",
-        "models": "icon_seamless",
+        "models": "icon_seamless", # Usa l'Ensemble ICON per i 6 giorni
         "timezone": "Europe/Rome", 
         "forecast_days": 6
-    }).json()
+    }
     
+    dati = requests.get(url, params=params).json()
     daily = dati.get('daily', {})
     date_array = daily.get('time', [])
     
-    report = "Giorno | T.Min | T.Max | Prec. Totali | Vento Max\n"
+    # Funzione fondamentale: calcola la media matematica di tutti gli "spaghi" per il giorno selezionato
+    def calcola_media_ens(base_var, index):
+        valori = []
+        for key, array_vals in daily.items():
+            if key.startswith(f"{base_var}_member"):
+                val = array_vals[index]
+                if val is not None:
+                    valori.append(val)
+        if valori:
+            return sum(valori) / len(valori)
+        return 0.0
+
+    report = "Giorno | T.Min Media | T.Max Media | Prec. Media | Vento Max Medio\n"
     
     # Il ciclo parte da 2 per saltare Oggi (0) e Domani (1) già coperti dal bollettino giornaliero
     for i in range(2, 6): 
@@ -74,12 +89,12 @@ def main():
         data_obj = datetime.strptime(date_array[i], "%Y-%m-%d")
         giorno_str = data_obj.strftime("%A %d %B")
         
-        t_min = daily.get('temperature_2m_min', [0]*6)[i]
-        t_max = daily.get('temperature_2m_max', [0]*6)[i]
-        prec = daily.get('precipitation_sum', [0]*6)[i]
-        vento = daily.get('wind_speed_10m_max', [0]*6)[i]
+        t_min_avg = calcola_media_ens("temperature_2m_min", i)
+        t_max_avg = calcola_media_ens("temperature_2m_max", i)
+        prec_avg = calcola_media_ens("precipitation_sum", i)
+        vento_avg = calcola_media_ens("wind_speed_10m_max", i)
         
-        report += f"{giorno_str} | {t_min}°C | {t_max}°C | {prec} mm | {vento} km/h\n"
+        report += f"{giorno_str} | {t_min_avg:.1f}°C | {t_max_avg:.1f}°C | {prec_avg:.1f} mm | {vento_avg:.1f} km/h\n"
 
     tendenza = interpella_gemini(report)
     
