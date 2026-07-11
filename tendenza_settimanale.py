@@ -99,7 +99,7 @@ def main():
     tendenza = interpella_gemini(report)
     
     # Aggiungo un titolo in grassetto
-    messaggio_finale = f"📅 **TENDENZA METEO SETTIMANALE**\n\n{tendenza}"
+    messaggio_finale = f"📅 **TENDENZA METEO A MEDIO TERMINE**\n\n{tendenza}"
     
     token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
