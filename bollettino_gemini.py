@@ -31,12 +31,31 @@ def interpella_gemini(dati_meteo, info_giornaliere):
     RIFERIMENTI UFFICIALI (Usa questi valori per le temperature min/max):
     {info_giornaliere}
 
-    REGOLE DI SCRITTURA (BOLLETTINO 4 STAGIONI):
-    1. NON usare elenchi puntati. Scrivi paragrafi fluidi (es. "La giornata di [Giorno] comincerà con...").
+    REGOLE DI SCRITTURA (BOLLETTINO AVANZATO):
+    1. NON usare elenchi puntati. Scrivi paragrafi fluidi e professionali.
     2. Usa le temperature min/max fornite nei riferimenti ufficiali come base della narrazione.
-    3. Focalizzati su nuvolosità, vento/raffiche e rischio precipitazioni basandoti sui dati orari.
-    4. REGOLA NEBBIA/BRINA: Valuta autonomamente il rischio incrociando Temperatura, UR% e Dew Point (Punto di rugiada). Menziona possibili foschie, nebbie o brinate SOLO se le condizioni fisiche lo suggeriscono fortemente (es. aria stagnante, T notturna vicina allo 0°C, UR > 90% e T vicina al Dew Point). Se le condizioni non ci sono (es. estate, aria secca o ventilazione), non nominarli affatto e non dare giustificazioni.
-    5. REGOLA DISAGIO TERMICO: Valuta lo stress termico per il corpo umano. In estate (T > 30°C), incrocia Temperatura e Dew Point per segnalare eventuale afa o marcato disagio da caldo. In inverno (T < 10°C), incrocia Temperatura e Vento per segnalare freddo acuito (Wind Chill). Se i valori rientrano in un normale comfort termico, non menzionare nulla.
+    
+    REGOLA PRECIPITAZIONI E STAGIONALITÀ (CRITICA):
+    3. Analizza SEMPRE la colonna EPS-Max. Se EPS-Max è maggiore di 0.0, anche se Prec.D2 è 0, DEVI obbligatoriamente segnalare l'instabilità, applicando questo filtro stagionale:
+       - Se il mese corrente è compreso tra MARZO e OTTOBRE: avvisa del rischio di "rovesci" o "temporali sparsi".
+       - Se il mese corrente è compreso tra NOVEMBRE e FEBBRAIO: usa ESCLUSIVAMENTE i termini "piogge", "precipitazioni" o "pioviggini" (è assolutamente vietato menzionare i temporali in questi mesi).
+    
+    REGOLA NEVE:
+    4. Se le colonne Prec.D2 o EPS-Max indicano precipitazioni (>0) e in quelle stesse ore la Temperatura (T) è <= 2°C, DEVI esplicitamente annunciare la possibilità di nevicate o pioggia mista a neve.
+    
+    REGOLE DI DISAGIO TERMICO (BIOMETEOROLOGIA):
+    5. AFA E CALDO (Basato su indice Humidex usando T e Dew Point):
+       - ASSENZA DI DISAGIO: Se le condizioni non rientrano nei casi successivi, usa termini standard senza menzionare l'afa.
+       - DISAGIO MODERATO (Attenzione - Colore Giallo): Se (T >= 28°C e Dew >= 15°C) OPPURE (T >= 25°C e Dew >= 20°C), segnala condizioni di "afa" e "disagio termico moderato".
+       - FORTE DISAGIO (Pericolo - Colore Rosso): Se (T >= 32°C e Dew >= 20°C) OPPURE (T >= 30°C e Dew >= 24°C), segnala esplicitamente "caldo opprimente", "afa intensa" e "potenziale rischio fisico" per le ore centrali.
+       
+    6. WIND CHILL (Basato su T e Vento):
+       - ASSENZA DI DISAGIO: Se Vento < 15 km/h o T > 8°C, usa le temperature standard senza menzionare il freddo percepito.
+       - DISAGIO MODERATO (Freddo acuito - Colore Azzurro): Se (T <= 8°C e Vento >= 15 km/h), spiega che a causa della ventilazione la sensazione di freddo sarà sensibilmente più pungente rispetto alla temperatura reale.
+       - FORTE DISAGIO (Rischio gelo - Colore Blu Scuro): Se (T <= 0°C e Vento >= 50 km/h) OPPURE (T <= -2°C e Vento >= 35 km/h) OPPURE (T <= -5°C e Vento >= 20 km/h), avvisa di condizioni "gelide" con percezione corporea severa (Wind Chill inferiore a -18°C).
+    
+    REGOLA NEBBIA/BRINA:
+    7. Menziona foschie, nebbie o brinate SOLO in caso di inversione termica probabile: aria stagnante (Vento < 5 km/h), T notturna vicina o sotto lo 0°C, e UR% vicina al 100%.
     
     DATI ANALITICI ORARI (Ora | T | UR% | Dew | Prec.D2 | EPS-Max | Vento | Raffica):
     {dati_meteo}
