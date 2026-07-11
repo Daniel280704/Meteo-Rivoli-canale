@@ -12,8 +12,8 @@ try:
 except:
     pass
 
-LAT = 45.0716
-LON = 7.5157
+LAT = 45.073443
+LON = 7.543472
 
 def interpella_gemini(dati_meteo, info_giornaliere):
     api_key = os.getenv("GEMINI_API_KEY")
