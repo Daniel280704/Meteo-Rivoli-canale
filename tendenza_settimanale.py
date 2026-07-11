@@ -42,7 +42,7 @@ def interpella_gemini(dati_tendenza):
     DIVIETO ASSOLUTO SUI TERMINI TECNICI:
     6. È severamente VIETATO menzionare i nomi delle colonne ("T.Min", "T.Max", "Prec"). L'utente non deve MAI leggere questi acronimi. Traduci i numeri in un discorso naturale.
 
-    DATI SINTETICI GIORNALIERI (Basati sulla Media degli Scenari Ensemble):
+    DATI SINTETICI GIORNALIERI (Basati sulla Media degli Scenari Ensemble CH2):
     {dati_tendenza}
     """
 
@@ -53,22 +53,22 @@ def interpella_gemini(dati_tendenza):
         return f"Errore AI: {e}"
 
 def main():
-    # Interroghiamo l'API ENSEMBLE di Open-Meteo per ottenere tutti gli scenari
+    # Interroghiamo l'API ENSEMBLE puntando specificamente a ICON-CH2 EPS
     url = "https://ensemble-api.open-meteo.com/v1/ensemble"
     params = {
         "latitude": LAT, 
         "longitude": LON,
         "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max",
-        "models": "icon_seamless", # Usa l'Ensemble ICON per i 6 giorni
+        "models": "meteoswiss_icon_ch2_ensemble",
         "timezone": "Europe/Rome", 
-        "forecast_days": 6
+        "forecast_days": 5 # 5 giorni: i primi 2 li saltiamo, usiamo i restanti 3
     }
     
     dati = requests.get(url, params=params).json()
     daily = dati.get('daily', {})
     date_array = daily.get('time', [])
     
-    # Funzione fondamentale: calcola la media matematica di tutti gli "spaghi" per il giorno selezionato
+    # Funzione che calcola la media matematica di tutti gli "spaghi" CH2
     def calcola_media_ens(base_var, index):
         valori = []
         for key, array_vals in daily.items():
@@ -82,8 +82,8 @@ def main():
 
     report = "Giorno | T.Min Media | T.Max Media | Prec. Media | Vento Max Medio\n"
     
-    # Il ciclo parte da 2 per saltare Oggi (0) e Domani (1) già coperti dal bollettino giornaliero
-    for i in range(2, 6): 
+    # Il ciclo parte da 2 e arriva fino a 5 esclusi (quindi indici 2, 3 e 4), che sono i 3 giorni finali
+    for i in range(2, 5): 
         if i >= len(date_array): break
         
         data_obj = datetime.strptime(date_array[i], "%Y-%m-%d")
@@ -98,7 +98,7 @@ def main():
 
     tendenza = interpella_gemini(report)
     
-    # Aggiungo un titolo in grassetto per distinguerlo sul canale
+    # Aggiungo un titolo in grassetto
     messaggio_finale = f"📅 **TENDENZA METEO SETTIMANALE**\n\n{tendenza}"
     
     token = os.getenv("TELEGRAM_TOKEN")
