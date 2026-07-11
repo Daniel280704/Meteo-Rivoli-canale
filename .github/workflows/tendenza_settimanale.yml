@@ -1,9 +1,9 @@
-name: Invio Tendenza Settimanale
+name: Invio Tendenza Medio Termine
 
 on:
   schedule:
-    # Esegue alle 07:00 UTC (le 09:00 in Italia) SOLO il giorno 1 (Lunedì)
-    - cron: '0 7 * * 1'
+    # Esegue alle 05:00 UTC (le 07:00 in Italia) i giorni 1 (Lunedì) e 4 (Giovedì)
+    - cron: '0 5 * * 1,4'
   workflow_dispatch:
 
 jobs:
