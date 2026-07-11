@@ -37,10 +37,10 @@ def interpella_gemini(dati_meteo, info_giornaliere):
     1. NON usare elenchi puntati. Scrivi paragrafi fluidi e professionali.
     2. Usa le temperature min/max fornite nei riferimenti ufficiali come base della narrazione.
     
-    REGOLA PRECIPITAZIONI E STAGIONALITÀ (CRITICA):
-    3. Analizza SEMPRE la colonna EPS-Max. Se EPS-Max è maggiore di 0.0, anche se Prec.D2 è 0, DEVI obbligatoriamente segnalare l'instabilità, applicando questo filtro stagionale:
-       - Se il mese corrente è compreso tra MARZO e OTTOBRE: avvisa del rischio di "rovesci" o "temporali sparsi".
-       - Se il mese corrente è compreso tra NOVEMBRE e FEBBRAIO: usa ESCLUSIVAMENTE i termini "piogge", "precipitazioni" o "pioviggini" (è assolutamente vietato menzionare i temporali in questi mesi).
+    REGOLA PRECIPITAZIONI, STAGIONALITÀ E FASCE ORARIE (CRITICA):
+    3. Analizza SEMPRE la colonna EPS-Max e Prec.D2. Se indicano instabilità o precipitazioni (>0), DEVI rispettare due parametri:
+       - STAGIONALITÀ: Tra MARZO e OTTOBRE avvisa del rischio di "rovesci" o "temporali sparsi". Tra NOVEMBRE e FEBBRAIO usa ESCLUSIVAMENTE termini come "piogge", "precipitazioni" o "pioviggini" (vietato menzionare i temporali in inverno).
+       - FINESTRA ORARIA: Analizza la colonna 'Ora' e indica sempre l'intervallo temporale in cui si concentreranno i fenomeni (es. "nel tardo pomeriggio, tra le 16:00 e le 19:00", oppure "nella prima mattinata"). Non elencare le singole ore, ma raggruppale in una fascia discorsiva ben definita.
     
     REGOLA NEVE:
     4. Se le colonne Prec.D2 o EPS-Max indicano precipitazioni (>0) e in quelle stesse ore la Temperatura (T) è <= 2°C, DEVI esplicitamente annunciare la possibilità di nevicate o pioggia mista a neve.
