@@ -19,7 +19,8 @@ def interpella_gemini(dati_meteo, info_giornaliere):
     api_key = os.getenv("GEMINI_API_KEY")
     genai.configure(api_key=api_key)
     # MODELLO AGGIORNATO (Versione 1.5)
-    model = genai.GenerativeModel('models/gemini-pro-latest')
+    #model = genai.GenerativeModel('models/gemini-pro-latest')
+    model = genai.GenerativeModel('models/gemini-3-flash-preview')    
     #model = genai.GenerativeModel('models/gemini-3.5-flash')
     
     oggi_str = datetime.now().strftime("%A %d %B")
@@ -57,7 +58,9 @@ def interpella_gemini(dati_meteo, info_giornaliere):
     
     REGOLA NEBBIA/BRINA:
     7. Menziona foschie, nebbie o brinate SOLO in caso di inversione termica probabile: aria stagnante (Vento < 5 km/h), T notturna vicina o sotto lo 0°C, e UR% vicina al 100%.
-    
+    DIVIETO ASSOLUTO SUI TERMINI TECNICI (MOLTO IMPORTANTE):
+    8. È severamente VIETATO menzionare nel testo finale i nomi delle colonne della tabella (come "EPS-Max", "Prec.D2", "UR%", "Dew", "T"). L'utente finale non deve MAI leggere questi acronimi. Usa la tabella solo come "cervello" per i tuoi calcoli interni, ma nel testo usa esclusivamente un linguaggio meteorologico discorsivo (es. scrivi "l'umidità dell'aria", "i modelli indicano instabilità", "l'aumento della nuvolosità").
+
     DATI ANALITICI ORARI (Ora | T | UR% | Dew | Prec.D2 | EPS-Max | Vento | Raffica):
     {dati_meteo}
     """
