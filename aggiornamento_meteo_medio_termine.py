@@ -39,6 +39,12 @@ def media_lista(lista):
     if not valori_validi: return 0
     return int(round(sum(valori_validi) / len(valori_validi)))
 
+def percentuale_superamento(lista, soglia):
+    """Calcola la percentuale di membri ENS che superano una certa soglia"""
+    valori_validi = [v for v in lista if v is not None]
+    if not valori_validi: return 0
+    return (sum(1 for v in valori_validi if v >= soglia) / len(valori_validi)) * 100
+
 def interpella_gemini(dati_testuali, oggi_str, giorni_str):
     api_key = os.getenv("GEMINI_API_KEY")
     genai.configure(api_key=api_key)
@@ -57,9 +63,10 @@ def interpella_gemini(dati_testuali, oggi_str, giorni_str):
     4. SINTESI DISCORSIVA: Sintetizza l'evoluzione usando fasi del giorno ("in mattinata", "nelle ore centrali", "nel pomeriggio", "in serata"). Usa la cronistoria fornita solo per capire l'andamento del cielo e dei fenomeni meteo, ma raccontali in modo narrativo.
     5. TEMPERATURE DA CITARE: Cita solo la temperatura minima (solitamente mattutina) e la temperatura massima prevista.
     6. DISAGIO TERMICO: Quando citi la temperatura massima, affianca ESATTAMENTE la dicitura sul disagio che trovi nei dati (es. inserisci testualmente "(disagio marcato 🟠)").
+    7. TERMINOLOGIA CIELO: Quando descrivi la nuvolosità, DEVI integrare nel testo ESATTAMENTE le stesse diciture fornite dai dati (es. "sereno", "poco nuvoloso", "parzialmente nuvoloso", "irregolarmente o molto nuvoloso", "molto nuvoloso o coperto"). Evita sinonimi liberi.
     
     ESEMPIO DI STILE DA IMITARE ALLA PERFEZIONE:
-    "La giornata di {giorni_str[2]} si aprirà con condizioni di stabilità atmosferica. Le temperature minime si assesteranno sui 19°C. Durante le ore di luce il cielo si manterrà in prevalenza sereno, favorendo un ampio soleggiamento che porterà la massima a 33°C (disagio marcato 🟠). Nel tardo pomeriggio parziale aumento della nuvolosità ma senza fenomeni di rilievo."
+    "La giornata di {giorni_str[2]} si aprirà con condizioni di stabilità atmosferica. Le temperature minime si assesteranno sui 19°C. Durante le ore di luce il cielo si manterrà in prevalenza sereno, favorendo un ampio soleggiamento che porterà la massima a 33°C (disagio marcato 🟠). Nel tardo pomeriggio avremo un cielo parzialmente nuvoloso, ma senza fenomeni di rilievo."
     
     DATI GIORNALIERI DA TRASFORMARE IN TESTO:
     {dati_testuali}
@@ -76,19 +83,19 @@ def main():
     estate = mese_corrente in [5, 6, 7, 8, 9, 10]
     
     try:
-        # Richiesta a 5 giorni, forzando ICON-CH2
+        # Richiesta a 5 giorni utilizzando ICON Seamless (unisce D2 ed EU)
         dati_det = requests.get("https://api.open-meteo.com/v1/forecast", params={
             "latitude": LAT, "longitude": LON,
             "hourly": "wind_direction_10m,cape,sunshine_duration,apparent_temperature,temperature_1000hPa,temperature_975hPa,temperature_950hPa,temperature_925hPa,temperature_900hPa,temperature_850hPa,temperature_800hPa",
             "daily": "sunrise,sunset",
-            "models": "icon_ch2",
+            "models": "icon_seamless",
             "timezone": "Europe/Rome", "forecast_days": 5
         }, timeout=10).json()
 
         dati_eps = requests.get("https://ensemble-api.open-meteo.com/v1/ensemble", params={
             "latitude": LAT, "longitude": LON,
             "hourly": "temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,dew_point_2m",
-            "models": "icon_ch2",
+            "models": "icon_seamless",
             "timezone": "Europe/Rome", "forecast_days": 5
         }, timeout=10).json()
             
@@ -100,33 +107,55 @@ def main():
     h_eps = dati_eps.get('hourly', {})
     orari = h_det.get('time', [])
     
-    # Salvataggio se ICON-CH2 restituisce solo 48 ore (spesso accade coi modelli ad alta risoluzione)
-    if len(orari) <= 48:
-        print("Attenzione: Open-Meteo ha restituito solo 48h per ICON-CH2. Il medio termine non è disponibile con questo modello.")
-        # Se capita, nel file potresti sostituire "icon_ch2" con "icon_eu" per garantire la profondità a 5 giorni.
-        return
-
     sunrise_str = dati_det.get('daily', {}).get('sunrise', [])
     sunset_str = dati_det.get('daily', {}).get('sunset', [])
 
-    # Strutture per i Giorni 3 (indice 2), 4 (indice 3), 5 (indice 4)
+    # --- Pre-calcolo medie di soleggiamento (Mattino e Pomeriggio) per il medio termine ---
+    medie_sole = {2: {'mattino': [], 'pomeriggio': []}, 
+                  3: {'mattino': [], 'pomeriggio': []}, 
+                  4: {'mattino': [], 'pomeriggio': []}}
+                  
+    for i in range(48, min(120, len(orari))):
+        ora_dt = datetime.fromisoformat(orari[i])
+        giorno_idx = i // 24
+        
+        if giorno_idx not in medie_sole:
+            continue
+            
+        alba = datetime.fromisoformat(sunrise_str[giorno_idx])
+        tramonto = datetime.fromisoformat(sunset_str[giorno_idx])
+        alba_piu_2 = alba + timedelta(hours=2)
+        tramonto_meno_2 = tramonto - timedelta(hours=2)
+        
+        sun_sec = h_det.get('sunshine_duration', [])[i] if i < len(h_det.get('sunshine_duration', [])) else None
+        sun_minuti = (sun_sec or 0) / 60
+        
+        if alba_piu_2 <= ora_dt and ora_dt.hour < 13:
+            medie_sole[giorno_idx]['mattino'].append(sun_minuti)
+        elif ora_dt.hour >= 13 and ora_dt <= tramonto_meno_2:
+            medie_sole[giorno_idx]['pomeriggio'].append(sun_minuti)
+
+    for g in medie_sole:
+        for p in ['mattino', 'pomeriggio']:
+            lst = medie_sole[g][p]
+            medie_sole[g][p] = sum(lst) / len(lst) if lst else 0
+    # --------------------------------------------------------------------------------------
+
     sintesi = {2: [], 3: [], 4: []}
     t_min = {2: 100, 3: 100, 4: 100}
     t_max = {2: -100, 3: -100, 4: -100}
     dew_max = {2: -100, 3: -100, 4: -100}
     windchill_min = {2: 100, 3: 100, 4: 100}
     
-    # Pre-carichiamo il dew point della 47esima ora per il controllo Föhn sulla 48esima
     dew_point_prev = None
     if len(orari) > 47:
         dew_membri_47 = [h_eps[k][47] for k in h_eps if k.startswith('dew_point_2m_member')]
         dew_point_prev = media_lista(dew_membri_47)
 
-    # LOOP DALLE 48 ORE FINO ALLE 120 (Giorno 3, 4, 5)
     for i in range(48, min(120, len(orari))):
         ora_dt = datetime.fromisoformat(orari[i])
         ora_solare = ora_dt.hour
-        giorno_idx = i // 24 # 2 = Dopodomani, 3 = Tra 3 giorni, 4 = Tra 4 giorni
+        giorno_idx = i // 24
         
         t_membri = [h_eps[k][i] for k in h_eps if k.startswith('temperature_2m_member')]
         t_media = media_lista(t_membri)
@@ -146,15 +175,19 @@ def main():
         w_dir = h_det.get('wind_direction_10m', [])[i] if i < len(h_det.get('wind_direction_10m', [])) else None
         w_dir_str = gradi_a_direzione(w_dir)
         
-        # INSTABILITÀ BASATA *SOLO* SULLE ENS DI ICON-CH2
+        # INSTABILITÀ BASATA SU PERCENTUALI DEL SINGOLO MODELLO (ICON Seamless)
         prec_membri = [h_eps[k][i] for k in h_eps if k.startswith('precipitation_member')]
-        prec_media = sum([v for v in prec_membri if v is not None]) / len(prec_membri) if prec_membri else 0
+        pct_1mm = percentuale_superamento(prec_membri, 1.0)
+        pct_3mm = percentuale_superamento(prec_membri, 3.0)
+        pct_5mm = percentuale_superamento(prec_membri, 5.0)
         
         instabilita = "assente"
-        if prec_media >= 1:
-            if prec_media >= 5: instabilita = "spiccata instabilità"
-            elif prec_media >= 3: instabilita = "marcata instabilità"
-            else: instabilita = "possibile instabilità"
+        if pct_5mm >= 10:
+            instabilita = "spiccata instabilità"
+        elif pct_3mm >= 15:
+            instabilita = "marcata instabilità"
+        elif pct_1mm >= 20:
+            instabilita = "possibile instabilità"
 
         tipo_prec = ""
         if instabilita != "assente":
@@ -203,20 +236,23 @@ def main():
         
         cielo = ""
         if alba_piu_2 <= ora_dt <= tramonto_meno_2:
-            sun_sec = h_det.get('sunshine_duration', [])[i] if i < len(h_det.get('sunshine_duration', [])) else None
-            sun_minuti = (sun_sec or 0) / 60
-            if sun_minuti < 5: cielo = "molto nuvoloso o coperto"
-            elif sun_minuti <= 15: cielo = "irregolarmente o molto nuvoloso"
-            elif sun_minuti <= 30: cielo = "parzialmente o irregolarmente nuvoloso"
-            elif sun_minuti <= 45: cielo = "parzialmente nuvoloso"
-            elif sun_minuti <= 55: cielo = "poco nuvoloso"
+            if ora_dt.hour < 13:
+                avg_sun = medie_sole[giorno_idx]['mattino']
+            else:
+                avg_sun = medie_sole[giorno_idx]['pomeriggio']
+                
+            # Logica severa per la copertura nuvolosa
+            if avg_sun < 10: cielo = "molto nuvoloso o coperto"
+            elif avg_sun <= 25: cielo = "irregolarmente o molto nuvoloso"
+            elif avg_sun <= 40: cielo = "parzialmente o irregolarmente nuvoloso"
+            elif avg_sun <= 50: cielo = "parzialmente nuvoloso"
+            elif avg_sun <= 57: cielo = "poco nuvoloso"
             else: cielo = "sereno"
 
         nebbia = ""
         if abs(dew_media - t_media) <= 1 and ur_media >= 95 and w_spd_media < 10:
             nebbia = "possibile formazione di nebbia"
 
-        # AGGIORNAMENTO ESTREMI TERMICI
         t_min[giorno_idx] = min(t_min[giorno_idx], t_media)
         t_max[giorno_idx] = max(t_max[giorno_idx], t_media)
         if estate: dew_max[giorno_idx] = max(dew_max[giorno_idx], dew_media)
@@ -232,7 +268,6 @@ def main():
         
         sintesi[giorno_idx].append(record)
 
-    # CALCOLO DISAGI
     disagio = {2: "", 3: "", 4: ""}
     for g in [2, 3, 4]:
         if estate and t_max[g] != -100:
@@ -249,7 +284,6 @@ def main():
         4: formatta_data_it(dt_oggi + timedelta(days=4))
     }
 
-    # ASSEMBLAGGIO TESTO
     testo_per_ia = ""
     for g in [2, 3, 4]:
         if not sintesi[g]: continue
