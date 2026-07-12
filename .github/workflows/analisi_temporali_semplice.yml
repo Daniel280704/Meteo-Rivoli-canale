@@ -4,7 +4,7 @@ on:
   schedule:
     # Esegue tutti i giorni alle 06:00 UTC (le 08:00 in Italia)
     # Il "4-9" indica che girerà SOLO da Aprile a Settembre.
-    - cron: '0 6 * 3-10 *'
+    #- cron: '0 6 * 3-10 *'
   
   # workflow_dispatch permette di far partire lo script manualmente tramite il pulsante "Run workflow" su GitHub
   workflow_dispatch: 
