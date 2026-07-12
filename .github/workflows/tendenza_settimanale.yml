@@ -3,7 +3,7 @@ name: Invio Tendenza Medio Termine
 on:
   schedule:
     # Esegue alle 05:00 UTC (le 07:00 in Italia) i giorni 1 (Lunedì) e 4 (Giovedì)
-    - cron: '0 5 * * 1,4'
+    - cron: '34 7 * * 1,4'
   workflow_dispatch:
 
 jobs:
