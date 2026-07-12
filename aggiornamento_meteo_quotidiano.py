@@ -48,6 +48,12 @@ def media_lista(lista):
     if not valori_validi: return 0
     return int(round(sum(valori_validi) / len(valori_validi)))
 
+def percentuale_superamento(lista, soglia):
+    """Calcola la percentuale di membri ENS che superano una certa soglia"""
+    valori_validi = [v for v in lista if v is not None]
+    if not valori_validi: return 0
+    return (sum(1 for v in valori_validi if v >= soglia) / len(valori_validi)) * 100
+
 def interpella_gemini(dati_testuali, oggi_str, domani_str):
     api_key = os.getenv("GEMINI_API_KEY")
     genai.configure(api_key=api_key)
@@ -63,9 +69,10 @@ def interpella_gemini(dati_testuali, oggi_str, domani_str):
     4. SINTESI DISCORSIVA: Sintetizza l'evoluzione usando fasi del giorno ("in mattinata", "nelle ore centrali", "nel pomeriggio", "in serata"). Usa la cronistoria fornita solo per capire l'andamento del cielo e dei fenomeni meteo, ma raccontali in modo narrativo.
     5. TEMPERATURE DA CITARE: Cita solo la temperatura minima (solitamente mattutina) e la temperatura massima prevista.
     6. DISAGIO TERMICO: Quando citi la temperatura massima, affianca ESATTAMENTE la dicitura sul disagio che trovi nei dati (es. inserisci testualmente "(disagio marcato 🟠)").
+    7. TERMINOLOGIA CIELO: Quando descrivi la nuvolosità, DEVI integrare nel testo ESATTAMENTE le stesse diciture fornite dai dati (es. "sereno", "poco nuvoloso", "parzialmente nuvoloso", "irregolarmente o molto nuvoloso", "molto nuvoloso o coperto"). Evita sinonimi liberi.
     
     ESEMPIO DI STILE DA IMITARE ALLA PERFEZIONE:
-    "La giornata di domenica si apre con condizioni di stabilità atmosferica. Le temperature minime si assestano sui 19°C. Durante le ore di luce il cielo si manterrà in prevalenza sereno, favorendo un ampio soleggiamento che porterà la massima a 33°C (disagio marcato 🟠). Nel tardo pomeriggio parziale aumento della nuvolosità ma senza fenomeni di rilievo."
+    "La giornata di domenica si apre con condizioni di stabilità atmosferica. Le temperature minime si assestano sui 19°C. Durante le ore di luce il cielo si manterrà in prevalenza sereno, favorendo un ampio soleggiamento che porterà la massima a 33°C (disagio marcato 🟠). Nel tardo pomeriggio avremo un cielo parzialmente nuvoloso, ma senza fenomeni di rilievo."
     
     DATI GIORNALIERI DA TRASFORMARE IN TESTO:
     {dati_testuali}
@@ -120,6 +127,32 @@ def main():
     sunrise_str = dati_det.get('daily', {}).get('sunrise', [])
     sunset_str = dati_det.get('daily', {}).get('sunset', [])
 
+    # --- Pre-calcolo medie di soleggiamento (Mattino e Pomeriggio) ---
+    medie_sole = {0: {'mattino': [], 'pomeriggio': []}, 1: {'mattino': [], 'pomeriggio': []}}
+    for i in range(len(orari)):
+        ora_dt = datetime.fromisoformat(orari[i])
+        giorno_idx = 0 if i < 24 else 1
+        alba = datetime.fromisoformat(sunrise_str[giorno_idx])
+        tramonto = datetime.fromisoformat(sunset_str[giorno_idx])
+        alba_piu_2 = alba + timedelta(hours=2)
+        tramonto_meno_2 = tramonto - timedelta(hours=2)
+        
+        sun_minuti = (h_det.get('sunshine_duration', [])[i] or 0) / 60
+        
+        # Mattino: da 2h dopo l'alba fino alle 12:59
+        if alba_piu_2 <= ora_dt and ora_dt.hour < 13:
+            medie_sole[giorno_idx]['mattino'].append(sun_minuti)
+        # Pomeriggio: dalle 13:00 fino a 2h prima del tramonto
+        elif ora_dt.hour >= 13 and ora_dt <= tramonto_meno_2:
+            medie_sole[giorno_idx]['pomeriggio'].append(sun_minuti)
+
+    # Calcoliamo le medie effettive per ciascun blocco
+    for g in [0, 1]:
+        for p in ['mattino', 'pomeriggio']:
+            lst = medie_sole[g][p]
+            medie_sole[g][p] = sum(lst) / len(lst) if lst else 0
+    # -----------------------------------------------------------------
+
     sintesi_oggi = []
     sintesi_domani = []
     t_min_oggi, t_max_oggi = 100, -100
@@ -149,27 +182,37 @@ def main():
         w_dir = h_det.get('wind_direction_10m', [])[i]
         w_dir_str = gradi_a_direzione(w_dir)
         
+        # Estrazione Precipitazioni Membri ENS
         prec_eps_d2_membri = [h_eps_d2[k][i] for k in h_eps_d2 if k.startswith('precipitation_member')]
-        prec_eps_d2_media = sum([v for v in prec_eps_d2_membri if v is not None]) / len(prec_eps_d2_membri) if prec_eps_d2_membri else 0
-        prec_det_d2 = h_det.get('precipitation', [])[i] if 'precipitation' in h_det else prec_eps_d2_media
+        prec_eps_ch2_membri = [h_eps_ch2[k][i] for k in h_eps_ch2 if k.startswith('precipitation_member')] if ch2_disponibile else []
         
-        prec_eps_ch2_media = 0
-        if ch2_disponibile:
-            prec_eps_ch2_membri = [h_eps_ch2[k][i] for k in h_eps_ch2 if k.startswith('precipitation_member')]
-            if prec_eps_ch2_membri:
-                prec_eps_ch2_media = sum([v for v in prec_eps_ch2_membri if v is not None]) / len(prec_eps_ch2_membri)
-
+        # Calcolo percentuali di superamento soglie su ICON-D2
+        pct_d2_1mm = percentuale_superamento(prec_eps_d2_membri, 1.0)
+        pct_d2_3mm = percentuale_superamento(prec_eps_d2_membri, 3.0)
+        pct_d2_5mm = percentuale_superamento(prec_eps_d2_membri, 5.0)
+        
         instabilita = "assente"
-        if ch2_disponibile:
-            condizione = (prec_eps_d2_media >= 1) and (prec_det_d2 >= 1) and (prec_eps_ch2_media >= 1)
-        else:
-            condizione = (prec_eps_d2_media >= 1) and (prec_det_d2 >= 1)
 
-        mm_max = max(prec_eps_d2_media, prec_det_d2, prec_eps_ch2_media)
-        if condizione:
-            if mm_max >= 5: instabilita = "spiccata instabilità"
-            elif mm_max >= 3: instabilita = "marcata instabilità"
-            else: instabilita = "possibile instabilità"
+        if ch2_disponibile:
+            pct_ch2_1mm = percentuale_superamento(prec_eps_ch2_membri, 1.0)
+            pct_ch2_3mm = percentuale_superamento(prec_eps_ch2_membri, 3.0)
+            pct_ch2_5mm = percentuale_superamento(prec_eps_ch2_membri, 5.0)
+            
+            # Matrice Dinamica di Tolleranza Incrociata (D2 e CH2 online)
+            if (pct_d2_5mm >= 10) or (pct_ch2_5mm >= 10):
+                instabilita = "spiccata instabilità"
+            elif ((pct_d2_3mm >= 10) and (pct_ch2_1mm > 0)) or ((pct_ch2_3mm >= 10) and (pct_d2_1mm > 0)):
+                instabilita = "marcata instabilità"
+            elif ((pct_d2_1mm >= 10) and (pct_ch2_1mm >= 10)) or (pct_d2_1mm >= 20) or (pct_ch2_1mm >= 20):
+                instabilita = "possibile instabilità"
+        else:
+            # Fallback se ICON-CH2 è offline: Soglie rialzate e ottimizzate per singolo modello (D2)
+            if pct_d2_5mm >= 10:      # Almeno 2 spaghi su 20 sopra i 5mm
+                instabilita = "spiccata instabilità"
+            elif pct_d2_3mm >= 15:    # Almeno 3 spaghi su 20 sopra i 3mm
+                instabilita = "marcata instabilità"
+            elif pct_d2_1mm >= 20:    # Almeno 4 spaghi su 20 sopra 1mm
+                instabilita = "possibile instabilità"
 
         tipo_prec = ""
         if instabilita != "assente":
@@ -214,12 +257,17 @@ def main():
         
         cielo = ""
         if alba_piu_2 <= ora_dt <= tramonto_meno_2:
-            sun_minuti = (h_det.get('sunshine_duration', [])[i] or 0) / 60
-            if sun_minuti < 5: cielo = "molto nuvoloso o coperto"
-            elif sun_minuti <= 15: cielo = "irregolarmente o molto nuvoloso"
-            elif sun_minuti <= 30: cielo = "parzialmente o irregolarmente nuvoloso"
-            elif sun_minuti <= 45: cielo = "parzialmente nuvoloso"
-            elif sun_minuti <= 55: cielo = "poco nuvoloso"
+            # Selezione della media corretta (mattino o pomeriggio) in base all'ora
+            if ora_dt.hour < 13:
+                avg_sun = medie_sole[giorno_idx]['mattino']
+            else:
+                avg_sun = medie_sole[giorno_idx]['pomeriggio']
+                
+            if avg_sun < 10: cielo = "molto nuvoloso o coperto"
+            elif avg_sun <= 25: cielo = "irregolarmente o molto nuvoloso"
+            elif avg_sun <= 40: cielo = "parzialmente o irregolarmente nuvoloso"
+            elif avg_sun <= 50: cielo = "parzialmente nuvoloso"
+            elif avg_sun <= 57: cielo = "poco nuvoloso"
             else: cielo = "sereno"
 
         nebbia = ""
