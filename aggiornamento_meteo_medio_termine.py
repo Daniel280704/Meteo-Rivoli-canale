@@ -398,32 +398,34 @@ def main():
                 else: tipo_prec = "neve"
             else: tipo_prec = "piogge"
 
-        vento_evento = ""
-        silenzia_vento = (estate and instabilita != "assente")
-        
-        if not silenzia_vento:
-            if w_gst_media >= 75 or w_spd_media >= 40: int_vento = "tempestosa"
-            elif w_gst_media >= 55 or w_spd_media >= 30: int_vento = "forte"
-            elif w_gst_media >= 40 or w_spd_media >= 20: int_vento = "modesta"
-            else: int_vento = "blanda"
+        # Assegnazione intensità del vento (soglie perfette come le hai impostate tu)
+        if w_gst_media >= 70: int_vento = "tempestosa"
+        elif w_gst_media >= 50: int_vento = "forte"
+        elif w_gst_media >= 30: int_vento = "modesta"
+        else: int_vento = "blanda"
 
-            if dew_point_prev is not None and w_gst_prev is not None and ur_prev is not None and w_spd_prev is not None:
-                aumento_spd = w_spd_media - w_spd_prev
-                aumento_vento = (w_gst_media - w_gst_prev) >= 10   # Soglia raffica ridotta a 10 km/h
-                crollo_dew = (dew_point_prev - dew_media) >= 3     # Soglia Föhn ridotta a 3°C
-                aumento_ur = (ur_media - ur_prev) >= 3             # Soglia vento orientale ridotta al 3%
+        vento_evento = ""
+
+        if dew_point_prev is not None and w_gst_prev is not None and ur_prev is not None:
                 
-                if aumento_spd < 5 and w_gst_media < 30:
-                    pass 
-                else:
-                    is_fohn = w_dir_str in ['NW', 'N', 'W'] and aumento_vento and crollo_dew
-                    is_oriente = w_dir_str in ['E', 'NE', 'SE'] and aumento_ur
-                    
-                    # Abbiamo rimosso "modesta" dalle esclusioni: ora scatta anche per vento moderato
-                    if is_fohn and int_vento not in ["blanda"]:
-                        vento_evento = f"ventilazione {int_vento} per condizioni di Föhn"
-                    elif is_oriente and int_vento not in ["blanda"]:
-                        vento_evento = f"ventilazione {int_vento} umida orientale"
+            # 1. CONDIZIONI FÖHN (Direzione N, NW, W)
+            # Scatta se la raffica è in aumento (>= 5 km/h) OPPURE se sta già soffiando (>= 30 km/h)
+            # E CONTEMPORANEAMENTE se l'aria si sta seccando (Dew scende >= 1) OPPURE se è già molto secca (UR < 40%)
+            is_fohn = (w_dir_str in ['NW', 'N', 'W'] and 
+                       ((w_gst_media - w_gst_prev) >= 5 or w_gst_media >= 30) and 
+                       ((dew_point_prev - dew_media) >= 1 or ur_media < 40))
+                
+            # 2. CONDIZIONI EST (Direzione E, NE, SE)
+            # Scatta se la raffica è in aumento (>= 5 km/h) OPPURE se sta già soffiando (>= 30 km/h)
+            # E l'umidità relativa è decente (evita di confondere venti orientali secchi con correnti umide)
+            is_oriente = (w_dir_str in ['E', 'NE', 'SE'] and 
+                          ((w_gst_media - w_gst_prev) >= 5 or w_gst_media >= 30) and 
+                          ur_media > 40)
+                
+            if is_fohn and int_vento not in ["blanda"]:
+                vento_evento = f"ventilazione {int_vento} per condizioni di Föhn"
+            elif is_oriente and int_vento not in ["blanda"]:
+                vento_evento = f"ventilazione {int_vento} umida orientale"
                             
         dew_point_prev = dew_media
         w_gst_prev = w_gst_media
