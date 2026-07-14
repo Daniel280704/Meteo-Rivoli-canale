@@ -108,7 +108,7 @@ def interpella_groq(dati_testuali, oggi_str, domani_str):
     Sei un meteorologo professionista. Il tuo compito è scrivere un bollettino discorsivo, fluido ed elegante per Rivoli (TO) partendo dalla sintesi oraria fornita.
     
     REGOLE FERREE (PENA IL FALLIMENTO):
-    1. TITOLO E IMPAGINAZIONE: Inizia ESATTAMENTE con: <b>Aggiornamento meteo di {oggi_str}</b>. Lascia SEMPRE una riga vuota tra il titolo e il primo paragrafo, e una riga vuota tra i paragrafi.
+    1. TITOLO E IMPAGINAZIONE: Inizia ESATTAMENTE con: <b>Aggiornamento meteo di {oggi_str}</b>. Lascia SEMPRE una riga vuota tra il titolo e il primo paragrafo, e UNA SOLA riga vuota tra i paragrafi (MAI PIU' DI UNA).
     2. STRUTTURA: Scrivi esattamente due paragrafi: il primo per la giornata odierna, il secondo per domani.
     3. DIVIETO ASSOLUTO DI ELENCARE GLI ORARI: NON elencare MAI le temperature ora per ora.
     4. SINTESI DISCORSIVA: Sintetizza l'evoluzione usando fasi del giorno ("in mattinata", "nelle ore centrali", "nel pomeriggio", "in serata").
@@ -228,12 +228,21 @@ def main():
         alba_piu_2 = alba + timedelta(hours=2)
         tramonto_meno_2 = tramonto - timedelta(hours=2)
         
-        if ch2_disponibile and h_det_ch2.get('sunshine_duration'):
-            sun_sec = h_det_ch2['sunshine_duration'][i]
-        else:
-            sun_sec = h_det.get('sunshine_duration', [])[i] if i < len(h_det.get('sunshine_duration', [])) else 0
+        # Estrazione sicura del dato di ICON-D2 (convertendo eventuali None in 0)
+        sun_sec_d2 = h_det.get('sunshine_duration', [])[i] if i < len(h_det.get('sunshine_duration', [])) else 0
+        sun_sec_d2 = sun_sec_d2 if sun_sec_d2 is not None else 0
+        
+        # Gestione prudenziale della nuvolosità (prendiamo il modello più pessimista)
+        if ch2_disponibile and h_det_ch2.get('sunshine_duration') and i < len(h_det_ch2['sunshine_duration']):
+            sun_sec_ch2 = h_det_ch2['sunshine_duration'][i]
+            sun_sec_ch2 = sun_sec_ch2 if sun_sec_ch2 is not None else 0
             
-        sun_minuti = (sun_sec or 0) / 60
+            # Scegliamo i secondi di sole MINORI tra i due modelli (cielo più coperto)
+            sun_sec = min(sun_sec_d2, sun_sec_ch2)
+        else:
+            sun_sec = sun_sec_d2
+            
+        sun_minuti = sun_sec / 60
         
         if alba_piu_2 <= ora_dt and ora_dt.hour < 13:
             medie_sole[giorno_idx]['mattino'].append(sun_minuti)
@@ -298,39 +307,75 @@ def main():
 
         if estate:
             if ch2_disponibile:
-                pct_ch2_1mm = percentuale_superamento(prec_eps_ch2_membri, 1.0)
-                pct_ch2_3mm = percentuale_superamento(prec_eps_ch2_membri, 3.0)
-                pct_ch2_5mm = percentuale_superamento(prec_eps_ch2_membri, 5.0)
-                num_ch2_1mm = conta_superamenti(prec_eps_ch2_membri, 1.0)
-                if num_d2_1mm >= 2 and num_ch2_1mm >= 2:
+                inizio_finestra = max(0, i - 4)
+                fine_finestra = min(len(orari), i + 5)
+                
+                max_num_ch2_intorno = 0
+                max_pct_ch2_intorno = 0
+                max_pct_d2_intorno = 0
+                
+                for j in range(inizio_finestra, fine_finestra):
+                    # Ricerca picco probabilità per CH2
+                    spaghi_ch2_j = [h_eps_ch2[k][j] for k in h_eps_ch2 if k.startswith('precipitation_member')]
+                    num_ch2_j = conta_superamenti(spaghi_ch2_j, 1.0)
+                    pct_ch2_j = percentuale_superamento(spaghi_ch2_j, 1.0)
+                    if num_ch2_j > max_num_ch2_intorno: max_num_ch2_intorno = num_ch2_j
+                    if pct_ch2_j > max_pct_ch2_intorno: max_pct_ch2_intorno = pct_ch2_j
+                    
+                    # Ricerca picco probabilità per D2
+                    spaghi_d2_j = [h_eps_d2[k][j] for k in h_eps_d2 if k.startswith('precipitation_member')]
+                    pct_d2_j = percentuale_superamento(spaghi_d2_j, 1.0)
+                    if pct_d2_j > max_pct_d2_intorno: max_pct_d2_intorno = pct_d2_j
+                
+                # Innesco all'ora esatta, ma stampa la media dei picchi massimi previsti!
+                if num_d2_1mm >= 2 and max_num_ch2_intorno >= 2:
                     instabilita = "un aumento dell'instabilità"
-                    if pct_d2_5mm >= 75 and pct_ch2_5mm >= 75: probabilita = 95
-                    elif pct_d2_5mm >= 50 and pct_ch2_5mm >= 50: probabilita = 80
-                    elif pct_d2_5mm >= 25 and pct_ch2_5mm >= 25: probabilita = 70
-                    elif pct_d2_3mm >= 50 and pct_ch2_3mm >= 50: probabilita = 60
-                    elif pct_d2_3mm >= 25 and pct_ch2_3mm >= 25: probabilita = 50
-                    elif pct_d2_1mm >= 50 and pct_ch2_1mm >= 50: probabilita = 40
-                    elif pct_d2_1mm >= 25 and pct_ch2_1mm >= 25: probabilita = 30
-                    else: probabilita = 15
+                    probabilita = int(round((max_pct_d2_intorno + max_pct_ch2_intorno) / 2))
             else:
                 if num_d2_1mm >= 3:
                     instabilita = "un aumento dell'instabilità"
-                    if pct_d2_5mm >= 75: probabilita = 95
-                    elif pct_d2_5mm >= 50: probabilita = 80
-                    elif pct_d2_5mm >= 25: probabilita = 70
-                    elif pct_d2_3mm >= 50: probabilita = 60
-                    elif pct_d2_3mm >= 25: probabilita = 50
-                    elif pct_d2_1mm >= 50: probabilita = 40
-                    elif pct_d2_1mm >= 25: probabilita = 30
-                    else: probabilita = 15
+                    # Ricerca picco D2 per fallback
+                    inizio_finestra = max(0, i - 4)
+                    fine_finestra = min(len(orari), i + 5)
+                    max_pct_d2_intorno = 0
+                    for j in range(inizio_finestra, fine_finestra):
+                        spaghi_d2_j = [h_eps_d2[k][j] for k in h_eps_d2 if k.startswith('precipitation_member')]
+                        pct_d2_j = percentuale_superamento(spaghi_d2_j, 1.0)
+                        if pct_d2_j > max_pct_d2_intorno: max_pct_d2_intorno = pct_d2_j
+                    
+                    probabilita = int(round(max_pct_d2_intorno))
+                    
         elif inverno:
             if ch2_disponibile:
-                pct_ch2_1mm = percentuale_superamento(prec_eps_ch2_membri, 1.0)
-                if pct_d2_1mm >= 50 and pct_ch2_1mm >= 50:
+                inizio_finestra = max(0, i - 2)
+                fine_finestra = min(len(orari), i + 3)
+                max_pct_ch2_intorno = 0
+                max_pct_d2_intorno = 0
+                
+                for j in range(inizio_finestra, fine_finestra):
+                    spaghi_ch2_j = [h_eps_ch2[k][j] for k in h_eps_ch2 if k.startswith('precipitation_member')]
+                    pct_ch2_j = percentuale_superamento(spaghi_ch2_j, 1.0)
+                    if pct_ch2_j > max_pct_ch2_intorno: max_pct_ch2_intorno = pct_ch2_j
+                    
+                    spaghi_d2_j = [h_eps_d2[k][j] for k in h_eps_d2 if k.startswith('precipitation_member')]
+                    pct_d2_j = percentuale_superamento(spaghi_d2_j, 1.0)
+                    if pct_d2_j > max_pct_d2_intorno: max_pct_d2_intorno = pct_d2_j
+                    
+                if pct_d2_1mm >= 50 and max_pct_ch2_intorno >= 50:
                     perturbazione = True
+                    probabilita = int(round((max_pct_d2_intorno + max_pct_ch2_intorno) / 2))
             else:
                 if pct_d2_1mm >= 75:
                     perturbazione = True
+                    inizio_finestra = max(0, i - 2)
+                    fine_finestra = min(len(orari), i + 3)
+                    max_pct_d2_intorno = 0
+                    for j in range(inizio_finestra, fine_finestra):
+                        spaghi_d2_j = [h_eps_d2[k][j] for k in h_eps_d2 if k.startswith('precipitation_member')]
+                        pct_d2_j = percentuale_superamento(spaghi_d2_j, 1.0)
+                        if pct_d2_j > max_pct_d2_intorno: max_pct_d2_intorno = pct_d2_j
+                    
+                    probabilita = int(round(max_pct_d2_intorno))
 
         tipo_prec = ""
         int_prec = ""
@@ -371,9 +416,9 @@ def main():
 
             if dew_point_prev is not None and w_gst_prev is not None and ur_prev is not None and w_spd_prev is not None:
                 aumento_spd = w_spd_media - w_spd_prev
-                aumento_vento = (w_gst_media - w_gst_prev) >= 20
-                crollo_dew = (dew_point_prev - dew_media) >= 5
-                aumento_ur = (ur_media - ur_prev) >= 5
+                aumento_vento = (w_gst_media - w_gst_prev) >= 10   # Soglia raffica ridotta a 10 km/h
+                crollo_dew = (dew_point_prev - dew_media) >= 3     # Soglia Föhn ridotta a 3°C
+                aumento_ur = (ur_media - ur_prev) >= 3             # Soglia vento orientale ridotta al 3%
                 
                 if aumento_spd < 5 and w_gst_media < 30:
                     pass 
@@ -381,21 +426,17 @@ def main():
                     is_fohn = w_dir_str in ['NW', 'N', 'W'] and aumento_vento and crollo_dew
                     is_oriente = w_dir_str in ['E', 'NE', 'SE'] and aumento_ur
                     
-                    if is_fohn and int_vento not in ["blanda", "modesta"]:
-                        vento_evento = f"ventilazione {int_vento} da probabile Föhn"
-                    elif is_oriente and int_vento not in ["blanda", "modesta"]:
+                    # Abbiamo rimosso "modesta" dalle esclusioni: ora scatta anche per vento moderato
+                    if is_fohn and int_vento not in ["blanda"]:
+                        vento_evento = f"ventilazione {int_vento} per condizioni di Föhn"
+                    elif is_oriente and int_vento not in ["blanda"]:
                         vento_evento = f"ventilazione {int_vento} umida orientale"
-                    elif int_vento not in ["blanda", "modesta"]:
-                        vento_evento = f"ventilazione {int_vento}"
-            else:
-                if int_vento not in ["blanda", "modesta"]:
-                    vento_evento = f"ventilazione {int_vento}"
                             
         dew_point_prev = dew_media
         w_gst_prev = w_gst_media
         w_spd_prev = w_spd_media
         ur_prev = ur_media
-
+               
         alba = datetime.fromisoformat(sunrise_str[giorno_idx])
         tramonto = datetime.fromisoformat(sunset_str[giorno_idx])
         alba_piu_2 = alba + timedelta(hours=2)
@@ -419,6 +460,28 @@ def main():
         if abs(dew_media - t_media) <= 1 and ur_media >= 95 and w_spd_media < 10:
             nebbia = "possibile formazione di nebbia"
 
+        gelata = ""
+        if ora_solare >= 22 or ora_solare <= 8:
+            # 1. FORTI GELATE (T <= -4°C)
+            if t_media <= -4:
+                if ur_media >= 50:
+                    gelata = "pericolo di forti gelate diffuse"          
+            # 2. GELATE MODESTE (-4°C < T <= -1°C)
+            elif -4 < t_media <= -1:
+                if ur_media >= 60:
+                    gelata = "rischio di gelate diffuse"
+                elif 45 <= ur_media < 60:
+                    gelata = "rischio di lievi gelate"
+            # 3. DEBOLI GELATE O BRINATE (-1°C < T <= 1°C)
+            elif -1 < t_media <= 1:
+                if t_media <= 0:
+                    if ur_media >= 55:
+                        gelata = "rischio di lievi gelate"
+                else: 
+                    # T tra 0°C e 1°C: gela solo se c'è molta umidità che favorisce il congelamento al suolo
+                    if ur_media >= 75:
+                        gelata = "possibili lievi brinate"
+
         if giorno_idx == 0:
             t_min_oggi = min(t_min_oggi, t_media)
             t_max_oggi = max(t_max_oggi, t_media)
@@ -435,10 +498,11 @@ def main():
             else:
                 record += f" Si segnala {instabilita} con rischio di {tipo_prec} ({probabilita}%)."
         elif inverno and perturbazione:
-            record += f" Perturbazione in transito con {tipo_prec} {int_prec} (media {prec_media_d2} mm/h)."
+            record += f" Perturbazione in transito con {tipo_prec} {int_prec} (media {prec_media_d2} mm/h, probabilità {probabilita}%)."
                 
         if vento_evento: record += f" {vento_evento}."
         if nebbia: record += f" {nebbia}."
+        if gelata: record += f" {gelata}."
         
         if giorno_idx == 0: sintesi_oggi.append(record)
         else: sintesi_domani.append(record)
@@ -482,14 +546,18 @@ def main():
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     if token and chat_id:
-        risposta_tg = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
-                      data={"chat_id": chat_id, "text": bollettino_finale, "parse_mode": "HTML"})
-        if risposta_tg.status_code == 200:
-            print("Bollettino inviato con successo!")
-            with open(FILE_LOCK, "w") as f:
-                f.write(oggi_str_lock)
+        # CONTROLLO DI SICUREZZA: Invia solo se Groq non ha restituito un errore
+        if bollettino_finale.startswith("Errore"):
+            print(f"Blocco l'invio su Telegram a causa di un errore API: {bollettino_finale}")
         else:
-            print(f"Errore Telegram: {risposta_tg.text}")
+            risposta_tg = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
+                          data={"chat_id": chat_id, "text": bollettino_finale, "parse_mode": "HTML"})
+            if risposta_tg.status_code == 200:
+                print("Bollettino inviato con successo!")
+                with open(FILE_LOCK, "w") as f:
+                    f.write(oggi_str_lock)
+            else:
+                print(f"Errore Telegram: {risposta_tg.text}")
     else:
         print("Errore: Token o Chat ID mancanti! Stampo a video:")
         print("-------------------------------------------------")
