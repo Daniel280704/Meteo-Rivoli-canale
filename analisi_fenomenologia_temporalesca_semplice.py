@@ -305,7 +305,8 @@ def main():
         else:
             titolo_blocco = "🌩 <b>PRE-AVVISO PER POSSIBILI TEMPORALI</b>"
         
-        messaggio_telegram += f"{titolo_blocco}\n📅 <b>Target: {giorno_formattato}</b>\n\n{responso}\n\n➖➖➖➖➖➖➖➖➖➖\n\n"
+        # QUI LA MODIFICA: Aggiunto un \n in più subito dopo {titolo_blocco}
+        messaggio_telegram += f"{titolo_blocco}\n\n📅 <b>Target: {giorno_formattato}</b>\n\n{responso}\n\n➖➖➖➖➖➖➖➖➖➖\n\n"
         inviato_almeno_uno = True
 
     if inviato_almeno_uno:
