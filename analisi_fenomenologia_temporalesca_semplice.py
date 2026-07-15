@@ -6,7 +6,6 @@ import requests
 from datetime import datetime, timedelta
 from groq import Groq
 
-# Coordinate - Rivoli (TO)
 LAT = 45.0734521841099
 LON = 7.543386286825349
 
