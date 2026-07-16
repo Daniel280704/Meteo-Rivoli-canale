@@ -259,6 +259,7 @@ def main():
     sintesi_domani = []
     t_min_oggi, t_max_oggi = 100, -100
     t_min_domani, t_max_domani = 100, -100
+    dew_max_oggi, dew_max_domani = -100, -100
     apparent_temperatures_medie = []
     
     dew_point_prev = None
@@ -485,12 +486,19 @@ def main():
                     if ur_media >= 75:
                         gelata = "possibili lievi brinate"
 
+        # LOGICA AGGIORNATA: Estrai dew point associato all'ora in cui si verifica la T max
         if giorno_idx == 0:
             t_min_oggi = min(t_min_oggi, t_media)
-            t_max_oggi = max(t_max_oggi, t_media)
+            if t_media > t_max_oggi:
+                t_max_oggi = t_media
+                if estate:
+                    dew_max_oggi = dew_media
         else:
             t_min_domani = min(t_min_domani, t_media)
-            t_max_domani = max(t_max_domani, t_media)
+            if t_media > t_max_domani:
+                t_max_domani = t_media
+                if estate:
+                    dew_max_domani = dew_media
 
         record = f"Ore {ora_solare}: T={t_media}°C."
         if cielo: record += f" cielo {cielo}."
@@ -514,8 +522,7 @@ def main():
     disagio_domani = ""
     
     if estate:
-        dew_max_oggi = media_lista([h_eps_d2[k][14] for k in h_eps_d2 if k.startswith('dew_point_2m_member')])
-        dew_max_domani = media_lista([h_eps_d2[k][14+24] for k in h_eps_d2 if k.startswith('dew_point_2m_member')])
+        # Il dew point è già stato associato alla T max nel loop
         disagio_oggi = calcola_disagio_caldo(t_max_oggi, dew_max_oggi)
         disagio_domani = calcola_disagio_caldo(t_max_domani, dew_max_domani)
     elif inverno:
