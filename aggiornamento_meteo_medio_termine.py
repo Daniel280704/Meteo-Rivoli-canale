@@ -477,11 +477,14 @@ def main():
                     if ur_media >= 75:
                         gelata = "possibili lievi brinate"
 
+        # LOGICA AGGIORNATA: Estrai dew point associato all'ora in cui si verifica la T max
         t_min[giorno_idx] = min(t_min[giorno_idx], t_media)
-        t_max[giorno_idx] = max(t_max[giorno_idx], t_media)
-        if estate: 
-            dew_max[giorno_idx] = max(dew_max[giorno_idx], dew_media)
-        elif inverno:
+        if t_media > t_max[giorno_idx]:
+            t_max[giorno_idx] = t_media
+            if estate:
+                dew_max[giorno_idx] = dew_media
+                
+        if inverno:
             windchill_min[giorno_idx] = min(windchill_min[giorno_idx], app_media)
 
         record = f"Ore {ora_solare}: T={t_media}°C."
