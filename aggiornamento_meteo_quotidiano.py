@@ -2,7 +2,9 @@
 import os
 import sys
 import time
+import math
 import requests
+from collections import Counter
 from datetime import datetime, timedelta
 from groq import Groq
 
@@ -20,558 +22,432 @@ def scarica_dati_con_retry(url, params, max_retries=3):
             resp.raise_for_status()
             return resp.json()
         except requests.exceptions.RequestException as e:
-            print(f"⚠️ Errore connessione Open-Meteo (Tentativo {tentativo + 1}/{max_retries}): {e}")
-            if tentativo < max_retries - 1:
-                time.sleep(10)
-            else:
-                raise e
+            print(f"⚠️ Errore connessione (Tentativo {tentativo + 1}/{max_retries}): {e}")
+            if tentativo < max_retries - 1: time.sleep(10)
+            else: raise e
+
+def scarica_sicuro(url, params):
+    try: return scarica_dati_con_retry(url, params)
+    except Exception as e:
+        print(f"⚠️ Fallito download per {params.get('models', 'Sconosciuto')}: {e}")
+        return {}
 
 def formatta_data_it(dt):
     return f"{GIORNI_IT[dt.weekday()]} {dt.day} {MESI_IT[dt.month]}"
 
-def gradi_a_direzione(gradi):
-    if gradi is None: return "N/A"
-    dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'N']
-    return dirs[int(round(gradi / 45.0)) % 8]
+def get_avg_arrays(*arrays):
+    valid_arrays = [a for a in arrays if a and isinstance(a, list) and len(a) > 0]
+    if not valid_arrays: return []
+    max_len = max(len(a) for a in valid_arrays)
+    result = []
+    for i in range(max_len):
+        vals = [a[i] for a in valid_arrays if i < len(a) and a[i] is not None]
+        if vals: result.append(sum(vals) / len(vals))
+        else: result.append(0.0)
+    return result
 
-def calcola_disagio_caldo(t_aria, dew_point):
-    if t_aria >= 40 and dew_point >= 15: return "(disagio estremo 🟣 - ELEVATO PERICOLO)"
-    elif t_aria >= 38 and dew_point >= 18: return "(disagio estremo 🟣 - ELEVATO PERICOLO)"
-    elif t_aria >= 36 and dew_point >= 20: return "(disagio estremo 🟣 - ELEVATO PERICOLO)"
-    elif t_aria >= 34 and dew_point >= 22: return "(disagio estremo 🟣 - ELEVATO PERICOLO)"
-    elif t_aria >= 32 and dew_point >= 24: return "(disagio estremo 🟣 - ELEVATO PERICOLO)"
-    elif t_aria >= 30 and dew_point >= 25: return "(disagio estremo 🟣 - ELEVATO PERICOLO)"
-    elif t_aria >= 28 and dew_point >= 26: return "(disagio estremo 🟣 - ELEVATO PERICOLO)"
-    
-    elif t_aria >= 38 and dew_point >= 12: return "(disagio forte 🔴)"
-    elif t_aria >= 36 and dew_point >= 15: return "(disagio forte 🔴)"
-    elif t_aria >= 34 and dew_point >= 18: return "(disagio forte 🔴)"
-    elif t_aria >= 32 and dew_point >= 20: return "(disagio forte 🔴)"
-    elif t_aria >= 30 and dew_point >= 22: return "(disagio forte 🔴)"
-    elif t_aria >= 28 and dew_point >= 24: return "(disagio forte 🔴)"
-    elif t_aria >= 26 and dew_point >= 25: return "(disagio forte 🔴)"
-    
-    elif t_aria >= 36 and dew_point >= 10: return "(disagio marcato 🟠)"
-    elif t_aria >= 34 and dew_point >= 13: return "(disagio marcato 🟠)"
-    elif t_aria >= 32 and dew_point >= 16: return "(disagio marcato 🟠)"
-    elif t_aria >= 30 and dew_point >= 18: return "(disagio marcato 🟠)"
-    elif t_aria >= 28 and dew_point >= 20: return "(disagio marcato 🟠)"
-    elif t_aria >= 26 and dew_point >= 22: return "(disagio marcato 🟠)"
-    elif t_aria >= 24 and dew_point >= 24: return "(disagio marcato 🟠)"
-    
-    elif t_aria >= 32 and dew_point >= 8: return "(disagio lieve 🟡)"
-    elif t_aria >= 30 and dew_point >= 11: return "(disagio lieve 🟡)"
-    elif t_aria >= 28 and dew_point >= 13: return "(disagio lieve 🟡)"
-    elif t_aria >= 26 and dew_point >= 15: return "(disagio lieve 🟡)"
-    elif t_aria >= 24 and dew_point >= 17: return "(disagio lieve 🟡)"
-    elif t_aria >= 22 and dew_point >= 19: return "(disagio lieve 🟡)"
-    
-    else:
-        return "(nessun disagio o caldo tollerabile)"
+def avg_wind_dir_arrays(*arrays):
+    valid_arrays = [a for a in arrays if a and isinstance(a, list) and len(a) > 0]
+    if not valid_arrays: return []
+    max_len = max(len(a) for a in valid_arrays)
+    result = []
+    for i in range(max_len):
+        vals = [a[i] for a in valid_arrays if i < len(a) and a[i] is not None]
+        if not vals: result.append(0)
+        else:
+            u = sum(math.sin(math.radians(v)) for v in vals)
+            v = sum(math.cos(math.radians(v)) for v in vals)
+            result.append((math.degrees(math.atan2(u, v)) + 360) % 360)
+    return result
 
-def calcola_disagio_freddo(windchill):
-    if windchill < -40: return "(disagio estremo da freddo 🥶)"
-    elif windchill < -25: return "(disagio forte da freddo 🥶)"
-    elif windchill < -10: return "(disagio marcato da freddo 🥶)"
-    elif windchill < 0: return "(disagio lieve da freddo 🥶)"
-    else:
-        return "(nessun disagio o freddo tollerabile)"
+def get_disagio_caldo(t_aria, dew_point):
+    if t_aria >= 40 and dew_point >= 15: return 4, "(disagio estremo 🟣)"
+    elif t_aria >= 38 and dew_point >= 18: return 4, "(disagio estremo 🟣)"
+    elif t_aria >= 36 and dew_point >= 20: return 4, "(disagio estremo 🟣)"
+    elif t_aria >= 34 and dew_point >= 22: return 4, "(disagio estremo 🟣)"
+    elif t_aria >= 32 and dew_point >= 24: return 4, "(disagio estremo 🟣)"
+    elif t_aria >= 30 and dew_point >= 25: return 4, "(disagio estremo 🟣)"
+    elif t_aria >= 28 and dew_point >= 26: return 4, "(disagio estremo 🟣)"
+    elif t_aria >= 38 and dew_point >= 12: return 3, "(disagio forte 🔴)"
+    elif t_aria >= 36 and dew_point >= 15: return 3, "(disagio forte 🔴)"
+    elif t_aria >= 34 and dew_point >= 18: return 3, "(disagio forte 🔴)"
+    elif t_aria >= 32 and dew_point >= 20: return 3, "(disagio forte 🔴)"
+    elif t_aria >= 30 and dew_point >= 22: return 3, "(disagio forte 🔴)"
+    elif t_aria >= 28 and dew_point >= 24: return 3, "(disagio forte 🔴)"
+    elif t_aria >= 26 and dew_point >= 25: return 3, "(disagio forte 🔴)"
+    elif t_aria >= 36 and dew_point >= 10: return 2, "(disagio marcato 🟠)"
+    elif t_aria >= 34 and dew_point >= 13: return 2, "(disagio marcato 🟠)"
+    elif t_aria >= 32 and dew_point >= 16: return 2, "(disagio marcato 🟠)"
+    elif t_aria >= 30 and dew_point >= 18: return 2, "(disagio marcato 🟠)"
+    elif t_aria >= 28 and dew_point >= 20: return 2, "(disagio marcato 🟠)"
+    elif t_aria >= 26 and dew_point >= 22: return 2, "(disagio marcato 🟠)"
+    elif t_aria >= 24 and dew_point >= 24: return 2, "(disagio marcato 🟠)"
+    elif t_aria >= 32 and dew_point >= 8:  return 1, "(disagio lieve 🟡)"
+    elif t_aria >= 30 and dew_point >= 11: return 1, "(disagio lieve 🟡)"
+    elif t_aria >= 28 and dew_point >= 13: return 1, "(disagio lieve 🟡)"
+    elif t_aria >= 26 and dew_point >= 15: return 1, "(disagio lieve 🟡)"
+    elif t_aria >= 24 and dew_point >= 17: return 1, "(disagio lieve 🟡)"
+    elif t_aria >= 22 and dew_point >= 19: return 1, "(disagio lieve 🟡)"
+    return 0, ""
 
-def media_lista(lista):
-    valori_validi = [v for v in lista if v is not None]
-    if not valori_validi: return 0
-    return int(round(sum(valori_validi) / len(valori_validi)))
+def calc_windchill(t, v):
+    if t <= 10 and v >= 4.8: return 13.12 + 0.6215 * t - 11.37 * (v ** 0.16) + 0.3965 * t * (v ** 0.16)
+    return t
 
-def media_lista_float(lista):
-    valori_validi = [v for v in lista if v is not None]
-    if not valori_validi: return 0.0
-    return round(sum(valori_validi) / len(valori_validi), 1)
+def get_disagio_freddo(wc):
+    if wc <= -40: return 4, "con un disagio estremo da freddo 🥶"
+    elif wc <= -28: return 3, "con un disagio forte da freddo 🥶"
+    elif wc <= -10: return 2, "con un disagio marcato da freddo 🥶"
+    elif wc <= 0: return 1, "con un disagio lieve da freddo 🥶"
+    return 0, ""
 
-def conta_superamenti(lista, soglia):
-    valori_validi = [v for v in lista if v is not None]
-    if not valori_validi: return 0
-    return sum(1 for v in valori_validi if v >= soglia)
+def arrotonda_decina(valore):
+    if valore is None: return 0
+    if valore >= 10: return int(round(valore / 10.0) * 10)
+    else: return int(round(valore))
 
-def percentuale_superamento(lista, soglia):
-    valori_validi = [v for v in lista if v is not None]
-    if not valori_validi: return 0
-    return (sum(1 for v in valori_validi if v >= soglia) / len(valori_validi)) * 100
+def arrotonda_intero(valore):
+    if valore is None: return 0
+    return int(round(valore))
+
+def arrotonda_prob(prob):
+    if prob < 15: return 0
+    return max(20, min(100, int(round(prob / 10.0) * 10)))
+
+def ottieni_fascia_oraria(ora):
+    if 0 <= ora < 6: return "nella notte"
+    elif 6 <= ora < 10: return "nella prima parte della mattinata"
+    elif 10 <= ora < 13: return "nella tarda mattinata"
+    elif 13 <= ora < 17: return "nel pomeriggio"
+    elif 17 <= ora < 19: return "nel tardo pomeriggio"
+    elif 19 <= ora < 22: return "in serata"
+    else: return "nella tarda serata"
+
+def get_cielo_prevalente(hours, cc_tot, cc_low, cc_mid, cc_high):
+    if not hours: return "sereno"
+    states = []
+    for h in hours:
+        cc = cc_tot[h] if h < len(cc_tot) else 0
+        low = cc_low[h] if h < len(cc_low) else 0
+        mid = cc_mid[h] if h < len(cc_mid) else 0
+        
+        if cc < 10: states.append("sereno")
+        elif low < 15 and mid < 15:
+            if cc <= 15: states.append("sereno")
+            elif cc <= 50: states.append("poco nuvoloso per velature")
+            elif cc <= 80: states.append("parzialmente nuvoloso per nubi alte")
+            else: states.append("cielo velato o coperto da nubi alte")
+        else:
+            if cc <= 10: states.append("sereno")
+            elif cc <= 30: states.append("poco nuvoloso")
+            elif cc <= 60: states.append("irregolarmente nuvoloso")
+            elif cc <= 85: states.append("molto nuvoloso")
+            else: states.append("coperto")
+    return Counter(states).most_common(1)[0][0] if states else "sereno"
 
 def interpella_groq(dati_testuali, oggi_str, domani_str):
     api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        return "Errore: GROQ_API_KEY non trovata."
-        
+    if not api_key: return "Errore: GROQ_API_KEY non trovata."
     client = Groq(api_key=api_key)
     
     prompt = f"""
-    Sei un meteorologo professionista. Il tuo compito è scrivere un bollettino discorsivo, fluido ed elegante per Rivoli (TO) partendo dalla sintesi oraria fornita.
+    Sei un meteorologo professionista. Scrivi un bollettino discorsivo, fluido ed elegante per Rivoli QUOTIDIANO (Oggi e Domani).
+    Ti fornirò i "fatti salienti" generati da algoritmi matematici.
     
     REGOLE FERREE (PENA IL FALLIMENTO):
-    1. TITOLO E IMPAGINAZIONE: Inizia ESATTAMENTE con: <b>Aggiornamento meteo di {oggi_str}</b>. Lascia SEMPRE una riga vuota tra il titolo e il primo paragrafo, e UNA SOLA riga vuota tra i paragrafi (MAI PIU' DI UNA).
-    2. STRUTTURA: Scrivi esattamente due paragrafi: il primo per la giornata odierna, il secondo per domani.
-    3. DIVIETO ASSOLUTO DI ELENCARE GLI ORARI: NON elencare MAI le temperature ora per ora.
-    4. SINTESI DISCORSIVA: Sintetizza l'evoluzione usando fasi del giorno ("in mattinata", "nelle ore centrali", "nel pomeriggio", "in serata").
-    5. TEMPERATURE DA CITARE: Cita solo la temperatura minima e la temperatura massima prevista.
-    6. DISAGIO TERMICO: Quando citi la temperatura massima, affianca ESATTAMENTE la dicitura sul disagio fornita nei dati (comprese le emoji come 🟢, 🟡, 🟠, 🔴, 🟣 o quelle invernali).
-    7. FLUIDITÀ E LESSICO SULLA NUVOLOSITÀ: Usa le diciture in modo NATURALE. È SEVERAMENTE VIETATO generare cacofonie come "la nuvolosità sarà parzialmente nuvolosa" (devi scrivere "il cielo si presenterà parzialmente nuvoloso"). Evita di ripetere la parola "cielo" a distanza ravvicinata.    8. PROBABILISMO SULLE PRECIPITAZIONI ESTIVE: In caso di instabilità, usa un tono probabilistico (es. "un aumento dell'instabilità con possibili rovesci (60%)"). Se ci sono più orari instabili, prendi la percentuale più alta e ignora gli altri.
-    9. GESTIONE MALTEMPO INVERNALE/AUTUNNALE: Se nei dati trovi "Perturbazione in transito", NON usare la parola "instabilità" o le percentuali. Invece, aggrega le fasce orarie indicando quando piove/nevica, l'intensità media (debole, moderata, forte) e individua SEMPRE l'orario del picco massimo e quanti mm/h sono previsti, citandoli nel testo.
-    10. DIVIETO ASSOLUTO DI FORMATTAZIONE MARKDOWN: Telegram va in crash con caratteri spaiati. NON USARE MAI asterischi (*), underscore (_) o formattazioni simili. Usa solo testo pulito e il tag HTML <b> per il titolo.
-    11. SILENZIO SUI FENOMENI ASSENTI: È ASSOLUTAMENTE VIETATO menzionare l'assenza di fenomeni. NON scrivere MAI frasi come "non sono previste precipitazioni", "assenza di fenomeni di rilievo" o "nessun rischio di pioggia". Se nei dati orari NON è menzionata la pioggia, il vento o il gelo, tu NON devi nominarli. Parla SOLO di ciò che c'è.
-    12. LIMITI TEMPORALI SULLA NUVOLOSITÀ: I dati sul cielo coprono SOLO le ore diurne (mattino e pomeriggio). È ASSOLUTAMENTE VIETATO descrivere o inventare lo stato del cielo in "serata" o in "nottata" (es. non scrivere MAI "il cielo sarà sereno in serata"). In serata puoi parlare solo di temperature, vento, gelate o precipitazioni (se presenti nei dati).
+    1. TITOLO E IMPAGINAZIONE: Inizia ESATTAMENTE con: <b>Aggiornamento meteo di {oggi_str}</b>.
+    2. STRUTTURA: Due paragrafi in totale, uno per Oggi e uno per Domani. Tra il titolo e il primo paragrafo, e tra il primo e il secondo paragrafo, devi lasciare ESATTAMENTE UNA SOLA riga vuota (ovvero premi 'Invio' due volte, non tre). È SEVERAMENTE VIETATO lasciare spaziature eccessive. INIZIA SEMPRE ogni paragrafo citando il giorno contestualizzato e la data (es. "Oggi, {oggi_str}, " oppure "Domani, {domani_str}, ").
+    3. STILE TEMPERATURE E DISAGIO CALDO: Subito dopo la data, per esprimere le temperature usa TASSATIVAMENTE questa struttura al singolare: "la temperatura minima sarà di X °C, mentre la massima raggiungerà i Y °C". Scrivi i valori termici SEMPRE staccando l'unità di misura (es. "20 °C"). DEVI INCLUDERE l'emoji del disagio termico copiandola dai dati (es. "con un disagio marcato 🟠"). Se c'è l'avviso "(possibili gelate)", copialo testualmente dopo la minima.
+    4. CIELO E NEBBIA: Non usare MAI l'avverbio "prevalentemente", usa sempre "in prevalenza". Se nei dati è indicata la nebbia, integrala in maniera fluida con la descrizione della nuvolosità (es. "Al mattino saranno possibili banchi di nebbia, che lasceranno spazio a un cielo in prevalenza poco nuvoloso...").
+    5. STILE VENTO E DISAGIO FREDDO: Se nei dati leggi "La ventilazione sarà blanda" o "La ventilazione sarà da blanda a moderata", scrivi ESATTAMENTE questo. Se è forte, aggancia fluidamente l'emoji e il disagio da freddo al vento se indicato.
+    6. DIVIETO COMMENTI SOGGETTIVI: NON usare MAI espressioni romanzate come "condizioni ideali" o "giornata scomoda". Mantieni un tono tecnico e fattuale. NESSUN asterisco o markdown. Usa un linguaggio naturale per integrare le varie fasi di precipitazione fornite nei dati.
+    7. QUALITÀ DELL'ARIA E SABBIA: Se presente l'avviso per aria inquinata o depositi di sabbia sulle superfici esposte, riportalo testualmente in modo asciutto alla fine del rispettivo paragrafo.
     
-    ESEMPIO DI STILE ESTIVO DA IMITARE:
-    <b>Aggiornamento meteo di domenica 12 luglio</b>
-
-    La giornata odierna si apre con stabilità atmosferica. Le minime si assestano sui 19°C. Durante le ore di luce il cielo si manterrà in prevalenza sereno, portando la massima a 33°C (disagio marcato 🟠). Nel tardo pomeriggio si segnala un aumento dell'instabilità con possibili rovesci o temporali (40%). In serata situazione in miglioramento.
-    
-    La giornata di domani seguirà un copione simile...
-
-    ESEMPIO DI STILE INVERNALE DA IMITARE:
-    <b>Aggiornamento meteo di domenica 12 dicembre</b>
-
-    La giornata odierna vedrà un progressivo peggioramento. Le temperature oscilleranno tra una minima di 4°C e una massima di 8°C (nessun disagio o freddo tollerabile 🟢). Dal pomeriggio è atteso il transito di una perturbazione con piogge deboli, che si intensificheranno in serata divenendo moderate. Il picco massimo delle precipitazioni è atteso intorno alle 21:00 con circa 4.5 mm/h. La ventilazione si manterrà forte umida orientale.
-    
-    La giornata di domani...
-
-    DATI GIORNALIERI DA TRASFORMARE IN TESTO:
+    DATI DA TRASFORMARE:
     {dati_testuali}
     """
     try:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            model="llama-3.3-70b-versatile",
-            temperature=0.25,
-        )
-        return chat_completion.choices[0].message.content
-    except Exception as e:
-        return f"Errore AI Groq: {e}"
+        res = client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="llama-3.3-70b-versatile", temperature=0.25)
+        return res.choices[0].message.content
+    except Exception as e: return f"Errore AI Groq: {e}"
 
 def main():
     mese_corrente = datetime.now().month
-    inverno = mese_corrente in [10, 11, 12, 1, 2, 3, 4]
     estate = mese_corrente in [5, 6, 7, 8, 9]
-    
     FILE_LOCK = "lock_quotidiano.txt"
     oggi_str_lock = datetime.now().strftime("%Y-%m-%d")
     
     if os.path.exists(FILE_LOCK):
         with open(FILE_LOCK, "r") as f:
             if f.read().strip() == oggi_str_lock:
-                print("✅ Bollettino quotidiano già inviato oggi. Esecuzione terminata.")
+                print("✅ Bollettino quotidiano già inviato oggi.")
                 sys.exit(0)
+
+    dt_oggi = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     
-    try:
-        dati_det = scarica_dati_con_retry("https://api.open-meteo.com/v1/forecast", params={
-            "latitude": LAT, "longitude": LON,
-            "hourly": "wind_direction_10m,cape,sunshine_duration,temperature_1000hPa,temperature_975hPa,temperature_950hPa,temperature_925hPa,temperature_900hPa,temperature_850hPa,temperature_800hPa",
-            "daily": "sunrise,sunset",
-            "models": "icon_d2",
-            "timezone": "Europe/Rome", "forecast_days": 2
-        })
+    p_ch2_det = {"latitude": LAT, "longitude": LON, "timezone": "auto", "forecast_days": 3, "models": "meteoswiss_icon_ch2", 
+                 "daily": "temperature_2m_min,temperature_2m_max,rain_sum,snowfall_sum,precipitation_probability_max,wind_direction_10m_dominant",
+                 "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature,rain,wind_gusts_10m,snowfall,snow_depth,cloud_cover_low,cloud_cover_mid,cloud_cover_high,cape,cloud_cover"}
+    p_ch2_ens = {"latitude": LAT, "longitude": LON, "timezone": "auto", "forecast_days": 3, "models": "meteoswiss_icon_ch2_ensemble_mean",
+                 "daily": "temperature_2m_max,temperature_2m_min,rain_sum,snowfall_sum,wind_direction_10m_dominant",
+                 "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature,rain,snowfall,snow_depth,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,wind_gusts_10m,cape"}
+    p_sea_det = {"latitude": LAT, "longitude": LON, "timezone": "auto", "forecast_days": 3, "models": "dwd_icon_seamless",
+                 "daily": "temperature_2m_min,temperature_2m_max,rain_sum,snowfall_sum,precipitation_probability_max",
+                 "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature,rain,snowfall,snow_depth,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,wind_gusts_10m,cape"}
+    p_sea_ens = {"latitude": LAT, "longitude": LON, "timezone": "auto", "forecast_days": 3, "models": "dwd_icon_eps_ensemble_mean_seamless",
+                 "daily": "temperature_2m_min,temperature_2m_max,rain_sum,snowfall_sum",
+                 "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature,rain,snowfall,cloud_cover,wind_gusts_10m,cape"}
+    p_aq = {"latitude": LAT, "longitude": LON, "timezone": "auto", "forecast_days": 3, "hourly": "pm10,pm2_5,dust"}
 
-        dati_eps_d2 = scarica_dati_con_retry("https://ensemble-api.open-meteo.com/v1/ensemble", params={
-            "latitude": LAT, "longitude": LON,
-            "hourly": "temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,dew_point_2m,apparent_temperature",
-            "models": "icon_d2",
-            "timezone": "Europe/Rome", "forecast_days": 2
-        })
-        
-        ch2_disponibile = True
-        try:
-            dati_eps_ch2 = scarica_dati_con_retry("https://ensemble-api.open-meteo.com/v1/ensemble", params={
-                "latitude": LAT, "longitude": LON,
-                "hourly": "precipitation",
-                "models": "meteoswiss_icon_ch2_ensemble",
-                "timezone": "Europe/Rome", "forecast_days": 2
-            })
-            
-            dati_det_ch2 = scarica_dati_con_retry("https://api.open-meteo.com/v1/forecast", params={
-                "latitude": LAT, "longitude": LON,
-                "hourly": "sunshine_duration",
-                "models": "meteoswiss_icon_ch2",
-                "timezone": "Europe/Rome", "forecast_days": 2
-            })
-            
-            if 'hourly' not in dati_eps_ch2 or 'hourly' not in dati_det_ch2:
-                ch2_disponibile = False
-        except:
-            ch2_disponibile = False
-            
-    except Exception as e:
-        print(f"❌ Errore fatale nel recupero dati Open-Meteo: {e}")
-        return
+    dati_ch2_det = scarica_sicuro("https://api.open-meteo.com/v1/forecast", p_ch2_det)
+    dati_ch2_ens = scarica_sicuro("https://ensemble-api.open-meteo.com/v1/ensemble", p_ch2_ens)
+    dati_sea_det = scarica_sicuro("https://api.open-meteo.com/v1/forecast", p_sea_det)
+    dati_sea_ens = scarica_sicuro("https://ensemble-api.open-meteo.com/v1/ensemble", p_sea_ens)
+    dati_aq = scarica_sicuro("https://air-quality-api.open-meteo.com/v1/air-quality", p_aq)
 
-    h_det = dati_det.get('hourly', {})
-    h_eps_d2 = dati_eps_d2.get('hourly', {})
-    h_eps_ch2 = dati_eps_ch2.get('hourly', {}) if ch2_disponibile else {}
-    h_det_ch2 = dati_det_ch2.get('hourly', {}) if ch2_disponibile else {}
-    orari = h_det.get('time', [])
+    d_ch2_det = dati_ch2_det.get('daily', {}); d_ch2_ens = dati_ch2_ens.get('daily', {})
+    d_sea_det = dati_sea_det.get('daily', {}); d_sea_ens = dati_sea_ens.get('daily', {})
+
+    giorni_time = d_ch2_det.get('time') or d_ch2_ens.get('time') or d_sea_det.get('time') or d_sea_ens.get('time') or []
+    t_min_avg = get_avg_arrays(d_ch2_det.get('temperature_2m_min'), d_ch2_ens.get('temperature_2m_min'), d_sea_det.get('temperature_2m_min'), d_sea_ens.get('temperature_2m_min'))
+    t_max_avg = get_avg_arrays(d_ch2_det.get('temperature_2m_max'), d_ch2_ens.get('temperature_2m_max'), d_sea_det.get('temperature_2m_max'), d_sea_ens.get('temperature_2m_max'))
+    rain_sum_avg = get_avg_arrays(d_ch2_det.get('rain_sum'), d_ch2_ens.get('rain_sum'), d_sea_det.get('rain_sum'), d_sea_ens.get('rain_sum'))
+    snow_sum_avg = get_avg_arrays(d_ch2_det.get('snowfall_sum'), d_ch2_ens.get('snowfall_sum'), d_sea_det.get('snowfall_sum'), d_sea_ens.get('snowfall_sum'))
+    prob_det_avg = get_avg_arrays(d_ch2_det.get('precipitation_probability_max'), d_sea_det.get('precipitation_probability_max'))
+    wind_dir_avg = avg_wind_dir_arrays(d_ch2_det.get('wind_direction_10m_dominant'), d_ch2_ens.get('wind_direction_10m_dominant'))
     
-    if not orari:
-        print("❌ Errore: Dati orari non disponibili.")
-        return
-        
-    sunrise_str = dati_det.get('daily', {}).get('sunrise', [])
-    sunset_str = dati_det.get('daily', {}).get('sunset', [])
-
-    medie_sole = {0: {'mattino': [], 'pomeriggio': []}, 1: {'mattino': [], 'pomeriggio': []}}
-    for i in range(len(orari)):
-        ora_dt = datetime.fromisoformat(orari[i])
-        giorno_idx = 0 if i < 24 else 1
-        alba = datetime.fromisoformat(sunrise_str[giorno_idx])
-        tramonto = datetime.fromisoformat(sunset_str[giorno_idx])
-        alba_piu_2 = alba + timedelta(hours=2)
-        tramonto_meno_2 = tramonto - timedelta(hours=2)
-        
-        # Estrazione sicura del dato di ICON-D2 (convertendo eventuali None in 0)
-        sun_sec_d2 = h_det.get('sunshine_duration', [])[i] if i < len(h_det.get('sunshine_duration', [])) else 0
-        sun_sec_d2 = sun_sec_d2 if sun_sec_d2 is not None else 0
-        
-        # Gestione prudenziale della nuvolosità (prendiamo il modello più pessimista)
-        if ch2_disponibile and h_det_ch2.get('sunshine_duration') and i < len(h_det_ch2['sunshine_duration']):
-            sun_sec_ch2 = h_det_ch2['sunshine_duration'][i]
-            sun_sec_ch2 = sun_sec_ch2 if sun_sec_ch2 is not None else 0
-            
-            # Scegliamo i secondi di sole MINORI tra i due modelli (cielo più coperto)
-            sun_sec = min(sun_sec_d2, sun_sec_ch2)
-        else:
-            sun_sec = sun_sec_d2
-            
-        sun_minuti = sun_sec / 60
-        
-        if alba_piu_2 <= ora_dt and ora_dt.hour < 13:
-            medie_sole[giorno_idx]['mattino'].append(sun_minuti)
-        elif ora_dt.hour >= 13 and ora_dt <= tramonto_meno_2:
-            medie_sole[giorno_idx]['pomeriggio'].append(sun_minuti)
-
-    for g in [0, 1]:
-        for p in ['mattino', 'pomeriggio']:
-            lst = medie_sole[g][p]
-            medie_sole[g][p] = sum(lst) / len(lst) if lst else 0
-
-    sintesi_oggi = []
-    sintesi_domani = []
-    t_min_oggi, t_max_oggi = 100, -100
-    t_min_domani, t_max_domani = 100, -100
-    dew_max_oggi, dew_max_domani = -100, -100
-    apparent_temperatures_medie = []
+    h_ch2_det = dati_ch2_det.get('hourly', {}); h_ch2_ens = dati_ch2_ens.get('hourly', {})
+    h_sea_det = dati_sea_det.get('hourly', {}); h_sea_ens = dati_sea_ens.get('hourly', {})
     
-    dew_point_prev = None
-    w_gst_prev = None
-    w_spd_prev = None
-    ur_prev = None
+    orari = h_ch2_det.get('time') or h_ch2_ens.get('time') or h_sea_det.get('time') or h_sea_ens.get('time') or []
+    if not orari: return
 
-    for i in range(len(orari)):
-        ora_dt = datetime.fromisoformat(orari[i])
-        ora_solare = ora_dt.hour
-        giorno_idx = 0 if i < 24 else 1
-        
-        t_membri = [h_eps_d2[k][i] for k in h_eps_d2 if k.startswith('temperature_2m_member')]
-        t_media = media_lista(t_membri)
-        
-        dew_membri = [h_eps_d2[k][i] for k in h_eps_d2 if k.startswith('dew_point_2m_member')]
-        dew_media = media_lista(dew_membri)
+    t_avg = get_avg_arrays(h_ch2_det.get('temperature_2m'), h_ch2_ens.get('temperature_2m'), h_sea_det.get('temperature_2m'), h_sea_ens.get('temperature_2m'))
+    dew_avg = get_avg_arrays(h_ch2_det.get('dew_point_2m'), h_ch2_ens.get('dew_point_2m'), h_sea_det.get('dew_point_2m'), h_sea_ens.get('dew_point_2m'))
+    ur_avg = get_avg_arrays(h_ch2_det.get('relative_humidity_2m'), h_ch2_ens.get('relative_humidity_2m'), h_sea_det.get('relative_humidity_2m'), h_sea_ens.get('relative_humidity_2m'))
+    app_avg = get_avg_arrays(h_ch2_det.get('apparent_temperature'), h_ch2_ens.get('apparent_temperature'), h_sea_det.get('apparent_temperature'), h_sea_ens.get('apparent_temperature'))
+    w_gst_avg = get_avg_arrays(h_ch2_det.get('wind_gusts_10m'), h_ch2_ens.get('wind_gusts_10m'), h_sea_det.get('wind_gusts_10m'), h_sea_det.get('wind_gusts_10m'))
+    cape_avg = get_avg_arrays(h_ch2_det.get('cape'), h_ch2_ens.get('cape'), h_sea_det.get('cape'), h_sea_ens.get('cape'))
+    rain_avg = get_avg_arrays(h_ch2_det.get('rain'), h_ch2_ens.get('rain'), h_sea_det.get('rain'), h_sea_ens.get('rain'))
+    snow_avg = get_avg_arrays(h_ch2_det.get('snowfall'), h_ch2_ens.get('snowfall'), h_sea_det.get('snowfall'), h_sea_ens.get('snowfall'))
+    cc_tot = get_avg_arrays(h_ch2_det.get('cloud_cover'), h_ch2_ens.get('cloud_cover'), h_sea_det.get('cloud_cover'), h_sea_ens.get('cloud_cover'))
+    snow_depth_avg = get_avg_arrays(h_ch2_det.get('snow_depth'), h_ch2_ens.get('snow_depth'), h_sea_det.get('snow_depth'))
+    cc_low = get_avg_arrays(h_ch2_det.get('cloud_cover_low'), h_ch2_ens.get('cloud_cover_low'), h_sea_det.get('cloud_cover_low'))
+    cc_mid = get_avg_arrays(h_ch2_det.get('cloud_cover_mid'), h_ch2_ens.get('cloud_cover_mid'), h_sea_det.get('cloud_cover_mid'))
+    cc_high = get_avg_arrays(h_ch2_det.get('cloud_cover_high'), h_ch2_ens.get('cloud_cover_high'), h_sea_det.get('cloud_cover_high'))
+    
+    h_aq = dati_aq.get('hourly', {})
+    pm10 = h_aq.get('pm10', []); pm25 = h_aq.get('pm2_5', []); dust = h_aq.get('dust', [])
 
-        app_membri = [h_eps_d2[k][i] for k in h_eps_d2 if k.startswith('apparent_temperature_member')]
-        app_media = media_lista(app_membri)
-        apparent_temperatures_medie.append(app_media)
-        
-        ur_membri = [h_eps_d2[k][i] for k in h_eps_d2 if k.startswith('relative_humidity_2m_member')]
-        ur_media = media_lista(ur_membri)
-        
-        w_spd_membri = [h_eps_d2[k][i] for k in h_eps_d2 if k.startswith('wind_speed_10m_member')]
-        w_spd_media = media_lista(w_spd_membri)
-        
-        w_gst_membri = [h_eps_d2[k][i] for k in h_eps_d2 if k.startswith('wind_gusts_10m_member')]
-        w_gst_media = media_lista(w_gst_membri)
-        
-        w_dir = h_det.get('wind_direction_10m', [])[i]
-        w_dir_str = gradi_a_direzione(w_dir)
-        
-        prec_eps_d2_membri = [h_eps_d2[k][i] for k in h_eps_d2 if k.startswith('precipitation_member')]
-        prec_eps_ch2_membri = [h_eps_ch2[k][i] for k in h_eps_ch2 if k.startswith('precipitation_member')] if ch2_disponibile else []
-        prec_media_d2 = media_lista_float(prec_eps_d2_membri)
-        
-        pct_d2_1mm = percentuale_superamento(prec_eps_d2_membri, 1.0)
-        pct_d2_3mm = percentuale_superamento(prec_eps_d2_membri, 3.0)
-        pct_d2_5mm = percentuale_superamento(prec_eps_d2_membri, 5.0)
-        num_d2_1mm = conta_superamenti(prec_eps_d2_membri, 1.0)
-        
-        instabilita = "assente"
-        perturbazione = False
-        probabilita = 0
+    target_days = [0, 1]
+    dati_giorni = {}
+    
+    for d_idx, d_str in enumerate(giorni_time):
+        giorno_idx = (datetime.fromisoformat(d_str).date() - dt_oggi.date()).days
+        if giorno_idx in target_days:
+            dati_giorni[giorno_idx] = {
+                't_min': t_min_avg[d_idx] if d_idx < len(t_min_avg) else 0,
+                't_max': t_max_avg[d_idx] if d_idx < len(t_max_avg) else 0,
+                'rain_sum': rain_sum_avg[d_idx] if d_idx < len(rain_sum_avg) else 0,
+                'snow_sum': snow_sum_avg[d_idx] if d_idx < len(snow_sum_avg) else 0,
+                'wind_dir': wind_dir_avg[d_idx] if d_idx < len(wind_dir_avg) else 0,
+                'prob_max': prob_det_avg[d_idx] if d_idx < len(prob_det_avg) else 0,
+                'livello_dc_max': 0, 'str_dc': "", 'livello_df_max': 0, 'str_df': "",
+                'w_gst_max': -1, 'ora_w_gst_max': None, 'ora_inizio_vento': None, 'ora_fine_vento': None,
+                'ha_precip': False, 
+                'eventi_precip': {
+                    'pioggia': {'inizio': None, 'fine': None, 'picco_mm': -1, 'ora_picco': None, 'estate_tipo': 'piogge'},
+                    'mista': {'inizio': None, 'fine': None, 'picco_mm': -1, 'ora_picco': None},
+                    'neve': {'inizio': None, 'fine': None, 'picco_mm': -1, 'ora_picco': None}
+                },
+                'cielo_mattino': "", 'cielo_pomeriggio': "", 'nebbie': set(), 'ha_gelate': False, 'aq_level': 0, 'max_snow_depth': 0.0,
+                'ha_sabbia': False
+            }
 
+    indici_validi = [i for i, t in enumerate(orari) if (datetime.fromisoformat(t).date() - dt_oggi.date()).days in target_days]
+
+    for i in indici_validi:
+        ora_solare = datetime.fromisoformat(orari[i]).hour
+        giorno_idx = (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days
+        dg = dati_giorni[giorno_idx]
+        
+        t_m, dew_m, ur_m, app_m, w_m = t_avg[i], dew_avg[i], ur_avg[i], app_avg[i], w_gst_avg[i]
+        cc_low_m = cc_low[i] if i < len(cc_low) and cc_low[i] is not None else 0
+        cc_mid_m = cc_mid[i] if i < len(cc_mid) and cc_mid[i] is not None else 0
+        dep = t_m - dew_m
+        
+        # AQ e Dust
+        p10 = pm10[i] if i < len(pm10) and pm10[i] is not None else 0
+        p25 = pm25[i] if i < len(pm25) and pm25[i] is not None else 0
+        dust_val = dust[i] if i < len(dust) and dust[i] is not None else 0
+
+        if p10 > 100 or p25 > 50: dg['aq_level'] = 2
+        elif (p10 > 51 or p25 > 36) and dg['aq_level'] < 2: dg['aq_level'] = 1
+            
         if estate:
-            if ch2_disponibile:
-                inizio_finestra = max(0, i - 4)
-                fine_finestra = min(len(orari), i + 5)
-                
-                max_num_ch2_intorno = 0
-                max_pct_ch2_intorno = 0
-                max_pct_d2_intorno = 0
-                
-                for j in range(inizio_finestra, fine_finestra):
-                    # Ricerca picco probabilità per CH2
-                    spaghi_ch2_j = [h_eps_ch2[k][j] for k in h_eps_ch2 if k.startswith('precipitation_member')]
-                    num_ch2_j = conta_superamenti(spaghi_ch2_j, 1.0)
-                    pct_ch2_j = percentuale_superamento(spaghi_ch2_j, 1.0)
-                    if num_ch2_j > max_num_ch2_intorno: max_num_ch2_intorno = num_ch2_j
-                    if pct_ch2_j > max_pct_ch2_intorno: max_pct_ch2_intorno = pct_ch2_j
-                    
-                    # Ricerca picco probabilità per D2
-                    spaghi_d2_j = [h_eps_d2[k][j] for k in h_eps_d2 if k.startswith('precipitation_member')]
-                    pct_d2_j = percentuale_superamento(spaghi_d2_j, 1.0)
-                    if pct_d2_j > max_pct_d2_intorno: max_pct_d2_intorno = pct_d2_j
-                
-                # Innesco all'ora esatta, ma stampa la media dei picchi massimi previsti!
-                if num_d2_1mm >= 2 and max_num_ch2_intorno >= 2:
-                    instabilita = "un aumento dell'instabilità"
-                    probabilita = int(round((max_pct_d2_intorno + max_pct_ch2_intorno) / 2))
-            else:
-                if num_d2_1mm >= 3:
-                    instabilita = "un aumento dell'instabilità"
-                    # Ricerca picco D2 per fallback
-                    inizio_finestra = max(0, i - 4)
-                    fine_finestra = min(len(orari), i + 5)
-                    max_pct_d2_intorno = 0
-                    for j in range(inizio_finestra, fine_finestra):
-                        spaghi_d2_j = [h_eps_d2[k][j] for k in h_eps_d2 if k.startswith('precipitation_member')]
-                        pct_d2_j = percentuale_superamento(spaghi_d2_j, 1.0)
-                        if pct_d2_j > max_pct_d2_intorno: max_pct_d2_intorno = pct_d2_j
-                    
-                    probabilita = int(round(max_pct_d2_intorno))
-                    
-        elif inverno:
-            if ch2_disponibile:
-                inizio_finestra = max(0, i - 2)
-                fine_finestra = min(len(orari), i + 3)
-                max_pct_ch2_intorno = 0
-                max_pct_d2_intorno = 0
-                
-                for j in range(inizio_finestra, fine_finestra):
-                    spaghi_ch2_j = [h_eps_ch2[k][j] for k in h_eps_ch2 if k.startswith('precipitation_member')]
-                    pct_ch2_j = percentuale_superamento(spaghi_ch2_j, 1.0)
-                    if pct_ch2_j > max_pct_ch2_intorno: max_pct_ch2_intorno = pct_ch2_j
-                    
-                    spaghi_d2_j = [h_eps_d2[k][j] for k in h_eps_d2 if k.startswith('precipitation_member')]
-                    pct_d2_j = percentuale_superamento(spaghi_d2_j, 1.0)
-                    if pct_d2_j > max_pct_d2_intorno: max_pct_d2_intorno = pct_d2_j
-                    
-                if pct_d2_1mm >= 50 and max_pct_ch2_intorno >= 50:
-                    perturbazione = True
-                    probabilita = int(round((max_pct_d2_intorno + max_pct_ch2_intorno) / 2))
-            else:
-                if pct_d2_1mm >= 75:
-                    perturbazione = True
-                    inizio_finestra = max(0, i - 2)
-                    fine_finestra = min(len(orari), i + 3)
-                    max_pct_d2_intorno = 0
-                    for j in range(inizio_finestra, fine_finestra):
-                        spaghi_d2_j = [h_eps_d2[k][j] for k in h_eps_d2 if k.startswith('precipitation_member')]
-                        pct_d2_j = percentuale_superamento(spaghi_d2_j, 1.0)
-                        if pct_d2_j > max_pct_d2_intorno: max_pct_d2_intorno = pct_d2_j
-                    
-                    probabilita = int(round(max_pct_d2_intorno))
-
-        tipo_prec = ""
-        int_prec = ""
-        
-        if estate and instabilita != "assente":
-            cape = h_det.get('cape', [])[i] if i < len(h_det.get('cape', [])) else 0
-            if cape is None: cape = 0
-            if cape > 200: tipo_prec = "rovesci o temporali"
-            else: tipo_prec = "rovesci"
-            
-        elif inverno and perturbazione:
-            if prec_media_d2 > 5: int_prec = "forti"
-            elif prec_media_d2 >= 2: int_prec = "moderate"
-            else: int_prec = "deboli"
-            
-            if t_media < 2:
-                strati_quota = [
-                    h_det.get('temperature_1000hPa', [])[i], h_det.get('temperature_975hPa', [])[i],
-                    h_det.get('temperature_950hPa', [])[i], h_det.get('temperature_925hPa', [])[i],
-                    h_det.get('temperature_900hPa', [])[i], h_det.get('temperature_850hPa', [])[i],
-                    h_det.get('temperature_800hPa', [])[i]
-                ]
-                inversione_presente = any(t > 1 for t in strati_quota if t is not None)
-                if inversione_presente:
-                    if t_media > 0: tipo_prec = "piogge (per inversione termica in quota)"
-                    else: tipo_prec = "PERICOLO PIOGGIA CONGELANTE (Gelicidio)"
-                else: tipo_prec = "neve"
-            else: tipo_prec = "piogge"
-
-        # Assegnazione intensità del vento (soglie perfette come le hai impostate tu)
-        if w_gst_media >= 70: int_vento = "tempestosa"
-        elif w_gst_media >= 50: int_vento = "forte"
-        elif w_gst_media >= 30: int_vento = "modesta"
-        else: int_vento = "blanda"
-
-        vento_evento = ""
-
-        if dew_point_prev is not None and w_gst_prev is not None and ur_prev is not None:
-                
-            # 1. CONDIZIONI FÖHN (Direzione N, NW, W)
-            # Scatta se la raffica è in aumento (>= 5 km/h) OPPURE se sta già soffiando (>= 30 km/h)
-            # E CONTEMPORANEAMENTE se l'aria si sta seccando (Dew scende >= 1) OPPURE se è già molto secca (UR < 40%)
-            is_fohn = (w_dir_str in ['NW', 'N', 'W'] and 
-                       ((w_gst_media - w_gst_prev) >= 5 or w_gst_media >= 30) and 
-                       ((dew_point_prev - dew_media) >= 1 or ur_media < 40))
-                
-            # 2. CONDIZIONI EST (Direzione E, NE, SE)
-            # Scatta se la raffica è in aumento (>= 5 km/h) OPPURE se sta già soffiando (>= 30 km/h)
-            # E l'umidità relativa è decente (evita di confondere venti orientali secchi con correnti umide)
-            is_oriente = (w_dir_str in ['E', 'NE', 'SE'] and 
-                          ((w_gst_media - w_gst_prev) >= 5 or w_gst_media >= 30) and 
-                          ur_media > 40)
-                
-            if is_fohn and int_vento not in ["blanda"]:
-                vento_evento = f"ventilazione {int_vento} per condizioni di Föhn"
-            elif is_oriente and int_vento not in ["blanda"]:
-                vento_evento = f"ventilazione {int_vento} umida orientale"
-                            
-        dew_point_prev = dew_media
-        w_gst_prev = w_gst_media
-        w_spd_prev = w_spd_media
-        ur_prev = ur_media
-               
-        alba = datetime.fromisoformat(sunrise_str[giorno_idx])
-        tramonto = datetime.fromisoformat(sunset_str[giorno_idx])
-        alba_piu_2 = alba + timedelta(hours=2)
-        tramonto_meno_2 = tramonto - timedelta(hours=2)
-        
-        cielo = ""
-        if alba_piu_2 <= ora_dt <= tramonto_meno_2:
-            if ora_dt.hour < 13:
-                avg_sun = medie_sole[giorno_idx]['mattino']
-            else:
-                avg_sun = medie_sole[giorno_idx]['pomeriggio']
-                
-            if avg_sun < 10: cielo = "molto nuvoloso o coperto"
-            elif avg_sun <= 25: cielo = "irregolarmente o molto nuvoloso"
-            elif avg_sun <= 40: cielo = "parzialmente o irregolarmente nuvoloso"
-            elif avg_sun <= 50: cielo = "parzialmente nuvoloso"
-            elif avg_sun <= 57: cielo = "poco nuvoloso"
-            else: cielo = "sereno"
-
-        nebbia = ""
-        if abs(dew_media - t_media) <= 1 and ur_media >= 95 and w_spd_media < 10:
-            nebbia = "possibile formazione di nebbia"
-
-        gelata = ""
-        if ora_solare >= 22 or ora_solare <= 8:
-            # 1. FORTI GELATE (T <= -4°C)
-            if t_media <= -4:
-                if ur_media >= 50:
-                    gelata = "pericolo di forti gelate diffuse"          
-            # 2. GELATE MODESTE (-4°C < T <= -1°C)
-            elif -4 < t_media <= -1:
-                if ur_media >= 60:
-                    gelata = "rischio di gelate diffuse"
-                elif 45 <= ur_media < 60:
-                    gelata = "rischio di lievi gelate"
-            # 3. DEBOLI GELATE O BRINATE (-1°C < T <= 1°C)
-            elif -1 < t_media <= 1:
-                if t_media <= 0:
-                    if ur_media >= 55:
-                        gelata = "rischio di lievi gelate"
-                else: 
-                    # T tra 0°C e 1°C: gela solo se c'è molta umidità che favorisce il congelamento al suolo
-                    if ur_media >= 75:
-                        gelata = "possibili lievi brinate"
-
-        # LOGICA AGGIORNATA: Estrai dew point associato all'ora in cui si verifica la T max
-        if giorno_idx == 0:
-            t_min_oggi = min(t_min_oggi, t_media)
-            if t_media > t_max_oggi:
-                t_max_oggi = t_media
-                if estate:
-                    dew_max_oggi = dew_media
+            lvl_dc, st_dc = get_disagio_caldo(t_m, dew_m)
+            if lvl_dc > dg['livello_dc_max']: dg['livello_dc_max'], dg['str_dc'] = lvl_dc, st_dc
         else:
-            t_min_domani = min(t_min_domani, t_media)
-            if t_media > t_max_domani:
-                t_max_domani = t_media
-                if estate:
-                    dew_max_domani = dew_media
+            lvl_df, st_df = get_disagio_freddo(calc_windchill(t_m, w_m))
+            if lvl_df > dg['livello_df_max']: dg['livello_df_max'], dg['str_df'] = lvl_df, st_df
+            
+        if w_m > dg['w_gst_max']: dg['w_gst_max'], dg['ora_w_gst_max'] = w_m, ora_solare
+        if w_m >= 50:
+            if dg['ora_inizio_vento'] is None: dg['ora_inizio_vento'] = ora_solare
+            dg['ora_fine_vento'] = ora_solare
 
-        record = f"Ore {ora_solare}: T={t_media}°C."
-        if cielo: record += f" cielo {cielo}."
+        sd_i = snow_depth_avg[i] if i < len(snow_depth_avg) else 0
+        if sd_i > dg['max_snow_depth']: dg['max_snow_depth'] = sd_i
+
+        # Rolling window per le precipitazioni (3 ore)
+        idx_start = max(0, i - 1)
+        idx_end = min(len(orari), i + 2)
+        prec_3h = sum((rain_avg[j] + snow_avg[j]) for j in range(idx_start, idx_end) if j < len(rain_avg) and j < len(snow_avg))
+        prec_oraria = rain_avg[i] + snow_avg[i]
         
-        if estate and instabilita != "assente":
-            if tipo_prec in ["rovesci", "rovesci o temporali"]:
-                record += f" Si segnala {instabilita} con possibili {tipo_prec} ({probabilita}%)."
-            else:
-                record += f" Si segnala {instabilita} con rischio di {tipo_prec} ({probabilita}%)."
-        elif inverno and perturbazione:
-            record += f" Perturbazione in transito con {tipo_prec} {int_prec} (media {prec_media_d2} mm/h, probabilità {probabilita}%)."
+        if prec_3h >= 1.0 and prec_oraria > 0.0:
+            if dust_val > 25: dg['ha_sabbia'] = True
+            
+            # Determinazione del tipo di precipitazione oraria
+            is_snow = snow_avg[i] >= 0.1
+            is_rain = rain_avg[i] >= 0.1
+            
+            if is_snow and is_rain: t_p = 'mista'
+            elif is_snow: t_p = 'neve'
+            else: t_p = 'pioggia'
+            
+            ev = dg['eventi_precip'][t_p]
+            if ev['inizio'] is None: ev['inizio'] = ora_solare
+            ev['fine'] = ora_solare
+            
+            if prec_oraria > ev['picco_mm']:
+                ev['picco_mm'] = prec_oraria
+                ev['ora_picco'] = ora_solare
                 
-        if vento_evento: record += f" {vento_evento}."
-        if nebbia: record += f" {nebbia}."
-        if gelata: record += f" {gelata}."
-        
-        if giorno_idx == 0: sintesi_oggi.append(record)
-        else: sintesi_domani.append(record)
+                if t_p == 'pioggia':
+                    if estate and cape_avg[i] > 400: ev['estate_tipo'] = "rovesci o temporali"
+                    elif estate: ev['estate_tipo'] = "rovesci"
+                    else: ev['estate_tipo'] = "piogge"
 
-    disagio_oggi = ""
-    disagio_domani = ""
-    
-    if estate:
-        # Il dew point è già stato associato alla T max nel loop
-        disagio_oggi = calcola_disagio_caldo(t_max_oggi, dew_max_oggi)
-        disagio_domani = calcola_disagio_caldo(t_max_domani, dew_max_domani)
-    elif inverno:
-        windchill_min_oggi = min(apparent_temperatures_medie[0:24])
-        windchill_min_domani = min(apparent_temperatures_medie[24:48])
-        disagio_oggi = calcola_disagio_freddo(windchill_min_oggi)
-        disagio_domani = calcola_disagio_freddo(windchill_min_domani)
+        # Nebbia
+        if ur_m >= 93 or dep <= 1.5:
+            if cc_low_m < 20 and cc_mid_m < 20 and w_m < 10:
+                dg['nebbie'].add(ottieni_fascia_oraria(ora_solare))
+                
+        # Gelate
+        if ur_m >= 75 or dep <= 3.0:
+            if t_m <= 0.0:
+                dg['ha_gelate'] = True
+            elif t_m <= 3.0 and cc_low_m < 20 and cc_mid_m < 20 and w_m < 12:
+                dg['ha_gelate'] = True
 
-    dt_oggi = datetime.now()
-    dt_domani = dt_oggi + timedelta(days=1)
+    testo_per_ia = ""
     oggi_str = formatta_data_it(dt_oggi)
-    domani_str = formatta_data_it(dt_domani)
+    domani_str = formatta_data_it(dt_oggi + timedelta(days=1))
+    
+    for g, nome_giorno in zip([0, 1], ["Oggi", "Domani"]):
+        dg = dati_giorni[g]
+        
+        h_mat = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 6 <= datetime.fromisoformat(orari[i]).hour < 13]
+        h_pom = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 13 <= datetime.fromisoformat(orari[i]).hour < 19]
+        c_mat = get_cielo_prevalente(h_mat, cc_tot, cc_low, cc_mid, cc_high)
+        c_pom = get_cielo_prevalente(h_pom, cc_tot, cc_low, cc_mid, cc_high)
+        
+        is_instabile = (estate and max([cape_avg[i] for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g] + [0]) > 400)
+        soglia_precip = 15 if is_instabile else 50
+        
+        # Scatta l'avviso precipitazioni se la probabilità è raggiunta e almeno una categoria di precipitazione è iniziata
+        if dg['prob_max'] >= soglia_precip and any(dg['eventi_precip'][k]['inizio'] is not None for k in dg['eventi_precip']): 
+            dg['ha_precip'] = True
+            
+        testo_per_ia += f"GIORNO: {nome_giorno} ({oggi_str if g==0 else domani_str})\n"
+        gelate_str = " (possibili gelate)" if dg['ha_gelate'] else ""
+        testo_per_ia += f"- Temperature: minima {round(dg['t_min'])} °C{gelate_str}, massima {round(dg['t_max'])} °C {dg['str_dc']}\n"
+        
+        cielo_txt = ""
+        if dg['nebbie']: cielo_txt += f"Possibili banchi di nebbia {', '.join(dg['nebbie'])}, per il resto "
+        if c_mat == c_pom:
+            if c_mat in ["sereno", "coperto"]: cielo_txt += f"cielo {c_mat} per gran parte del giorno."
+            else: cielo_txt += f"cielo in prevalenza {c_mat} per gran parte del giorno."
+        else: cielo_txt += f"cielo in prevalenza {c_mat} al mattino, tendente a {c_pom} nel pomeriggio."
+        testo_per_ia += f"- Cielo: {cielo_txt}\n"
+        
+        if dg['ha_precip']:
+            p_round = arrotonda_prob(dg['prob_max'])
+            sabbia_str = " (con possibilità di depositi di sabbia sulle superfici esposte)" if dg['ha_sabbia'] else ""
+            testo_per_ia += f"- Precipitazioni (Probabilità {p_round}%){sabbia_str}:\n"
+            
+            # Filtra ed ordina cronologicamente le fasi attive
+            active_types = [t for t in ['pioggia', 'mista', 'neve'] if dg['eventi_precip'][t]['inizio'] is not None]
+            active_types.sort(key=lambda t: dg['eventi_precip'][t]['inizio'])
+            
+            for t_p in active_types:
+                ev = dg['eventi_precip'][t_p]
+                
+                if t_p == 'pioggia': nome_fenomeno = ev['estate_tipo']
+                elif t_p == 'mista': nome_fenomeno = "pioggia mista a neve"
+                elif t_p == 'neve': nome_fenomeno = "nevicate"
+                
+                i_prec = "deboli"
+                if ev['picco_mm'] >= 30: i_prec = "a carattere di nubifragio"
+                elif ev['picco_mm'] >= 8: i_prec = "molto forti"
+                elif ev['picco_mm'] >= 4: i_prec = "forti"
+                elif ev['picco_mm'] >= 2: i_prec = "moderate"
+                
+                picco_val = arrotonda_intero(ev['picco_mm'])
+                picco_txt = f"circa {picco_val} mm/h" if picco_val > 0 else "inferiore a 1 mm/h"
+                
+                if ev['inizio'] == ev['fine']:
+                    testo_per_ia += f"  * Fase di {nome_fenomeno} {i_prec}: fenomeni isolati {ottieni_fascia_oraria(ev['inizio'])} (ore {ev['inizio']}).\n"
+                else:
+                    testo_per_ia += f"  * Fase di {nome_fenomeno} {i_prec}: inizio {ottieni_fascia_oraria(ev['inizio'])} (ore {ev['inizio']}), picco {ottieni_fascia_oraria(ev['ora_picco'])} (ore {ev['ora_picco']}) con intensità {picco_txt}, fine {ottieni_fascia_oraria(ev['fine'])} (ore {ev['fine']}).\n"
+            
+            if dg['snow_sum'] > 0 and ('neve' in active_types or 'mista' in active_types):
+                sd_max = dg['max_snow_depth'] * 100
+                if sd_max <= 1: s_str = "lieve velo al suolo"
+                elif sd_max <= 3: s_str = "lieve imbiancata"
+                elif sd_max <= 5: s_str = "discreta imbiancata"
+                else: s_str = "abbondante imbiancata"
+                testo_per_ia += f"  * Accumulo nevoso stimato a fine evento: {arrotonda_intero(dg['snow_sum'])} cm ({s_str}).\n"
+            
+            testo_per_ia += f"  * Accumulo pluviometrico totale stimato (incluso equivalente liquido della neve): {arrotonda_intero(dg['rain_sum'] + dg['snow_sum'])} mm.\n"
 
-    testo_per_ia = f"""
-    GIORNO 1: {oggi_str}
-    - Temperatura Minima: {t_min_oggi}°C
-    - Temperatura Massima: {t_max_oggi}°C {disagio_oggi}
-    CRONISTORIA DEGLI EVENTI DA SINTETIZZARE:
-    {chr(10).join(sintesi_oggi)}
+        if dg['w_gst_max'] >= 50:
+            int_vento = "tempestosa" if dg['w_gst_max'] >= 70 else "forte"
+            fohn_str = " (vento di Föhn)" if (225 <= dg['wind_dir'] <= 330) else ""
+            txt_vento = f"La ventilazione diverrà {int_vento}{fohn_str}."
+            if dg['ora_inizio_vento'] != dg['ora_fine_vento']:
+                txt_vento += f" Intensificazione a partire da {ottieni_fascia_oraria(dg['ora_inizio_vento'])} (ore {dg['ora_inizio_vento']}), in attenuazione {ottieni_fascia_oraria(dg['ora_fine_vento'])} (ore {dg['ora_fine_vento']})."
+            else:
+                txt_vento += f" Breve rinforzo isolato {ottieni_fascia_oraria(dg['ora_inizio_vento'])} (ore {dg['ora_inizio_vento']})."
+            txt_vento += f" Le raffiche massime previste {ottieni_fascia_oraria(dg['ora_w_gst_max'])} saranno attorno ai {arrotonda_tondo(dg['w_gst_max'])} km/h."
+        elif dg['w_gst_max'] >= 30:
+            txt_vento = "La ventilazione sarà da blanda a moderata."
+        else:
+            txt_vento = "La ventilazione sarà blanda."
+            
+        if dg['str_df']: txt_vento += f" Associato alla ventilazione, si percepirà {dg['str_df']}."
+        testo_per_ia += f"- Vento: {txt_vento}\n"
+            
+        if dg['aq_level'] == 2: testo_per_ia += "- Attenzione, l'aria sarà molto inquinata.\n"
+        elif dg['aq_level'] == 1: testo_per_ia += "- Attenzione, l'aria sarà inquinata.\n"
+        testo_per_ia += "\n"
 
-    GIORNO 2: {domani_str}
-    - Temperatura Minima: {t_min_domani}°C
-    - Temperatura Massima: {t_max_domani}°C {disagio_domani}
-    CRONISTORIA DEGLI EVENTI DA SINTETIZZARE:
-    {chr(10).join(sintesi_domani)}
-    """
-
+    oggi_str = formatta_data_it(dt_oggi)
     bollettino_finale = interpella_groq(testo_per_ia, oggi_str, domani_str)
     
     token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     if token and chat_id:
-        # CONTROLLO DI SICUREZZA: Invia solo se Groq non ha restituito un errore
-        if bollettino_finale.startswith("Errore"):
-            print(f"Blocco l'invio su Telegram a causa di un errore API: {bollettino_finale}")
+        if bollettino_finale.startswith("Errore"): print(f"Blocco Telegram per errore API: {bollettino_finale}")
         else:
-            risposta_tg = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
-                          data={"chat_id": chat_id, "text": bollettino_finale, "parse_mode": "HTML"})
+            risposta_tg = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": chat_id, "text": bollettino_finale, "parse_mode": "HTML"})
             if risposta_tg.status_code == 200:
                 print("Bollettino inviato con successo!")
-                with open(FILE_LOCK, "w") as f:
-                    f.write(oggi_str_lock)
-            else:
-                print(f"Errore Telegram: {risposta_tg.text}")
-    else:
-        print("Errore: Token o Chat ID mancanti! Stampo a video:")
-        print("-------------------------------------------------")
-        print(bollettino_finale)
+                with open(FILE_LOCK, "w") as f: f.write(oggi_str_lock)
+            else: print(f"Errore Telegram: {risposta_tg.text}")
+    else: print("Mancano credenziali Telegram. Stampo a video:\n" + "-"*50 + "\n" + bollettino_finale)
 
 if __name__ == "__main__":
     main()
