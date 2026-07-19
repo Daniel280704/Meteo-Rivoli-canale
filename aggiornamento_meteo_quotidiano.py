@@ -125,25 +125,27 @@ def ottieni_fascia_oraria(ora):
 
 def get_cielo_prevalente(hours, cc_tot, cc_low, cc_mid, cc_high):
     if not hours: return "sereno"
-    states = []
-    for h in hours:
-        cc = cc_tot[h] if h < len(cc_tot) else 0
-        low = cc_low[h] if h < len(cc_low) else 0
-        mid = cc_mid[h] if h < len(cc_mid) else 0
-        
-        if cc < 10: states.append("sereno")
-        elif low < 15 and mid < 15:
-            if cc <= 15: states.append("sereno")
-            elif cc <= 50: states.append("poco nuvoloso per velature")
-            elif cc <= 80: states.append("parzialmente nuvoloso per nubi alte")
-            else: states.append("cielo velato o coperto da nubi alte")
-        else:
-            if cc <= 10: states.append("sereno")
-            elif cc <= 30: states.append("poco nuvoloso")
-            elif cc <= 60: states.append("irregolarmente nuvoloso")
-            elif cc <= 85: states.append("molto nuvoloso")
-            else: states.append("coperto")
-    return Counter(states).most_common(1)[0][0] if states else "sereno"
+    
+    # Calcolo delle medie aritmetiche della copertura per il blocco orario
+    avg_cc = sum(cc_tot[h] for h in hours if h < len(cc_tot) and cc_tot[h] is not None) / len(hours)
+    avg_low = sum(cc_low[h] for h in hours if h < len(cc_low) and cc_low[h] is not None) / len(hours)
+    avg_mid = sum(cc_mid[h] for h in hours if h < len(cc_mid) and cc_mid[h] is not None) / len(hours)
+    
+    if avg_cc < 10: return "sereno"
+    elif avg_low < 15 and avg_mid < 15:
+        if avg_cc <= 15: return "sereno o al più poco nuvoloso per velature"
+        elif avg_cc <= 30: return "poco nuvoloso per velature"
+        elif avg_cc <= 50: return "parzialmente nuvoloso per velature"
+        elif avg_cc <= 70: return "irregolarmente nuvoloso per velature a tratti estese"
+        elif avg_cc <= 90: return "molto nuvoloso per estese velature"
+        else: return "coperto da nubi alte"
+    else:
+        if avg_cc <= 10: return "sereno"
+        elif avg_cc <= 30: return "poco nuvoloso"
+        elif avg_cc <= 50: return "parzialmente nuvoloso"
+        elif avg_cc <= 70: return "irregolarmente nuvoloso"
+        elif avg_cc <= 90: return "molto nuvoloso"
+        else: return "coperto"
 
 def interpella_groq(dati_testuali, oggi_str, domani_str):
     api_key = os.getenv("GROQ_API_KEY")
@@ -348,8 +350,8 @@ def main():
     for g, nome_giorno in zip([0, 1], ["Oggi", "Domani"]):
         dg = dati_giorni[g]
         
-        h_mat = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 6 <= datetime.fromisoformat(orari[i]).hour < 13]
-        h_pom = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 13 <= datetime.fromisoformat(orari[i]).hour < 19]
+        h_mat = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 6 <= datetime.fromisoformat(orari[i]).hour <= 12]
+        h_pom = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 13 <= datetime.fromisoformat(orari[i]).hour <= 19]
         c_mat = get_cielo_prevalente(h_mat, cc_tot, cc_low, cc_mid, cc_high)
         c_pom = get_cielo_prevalente(h_pom, cc_tot, cc_low, cc_mid, cc_high)
         
