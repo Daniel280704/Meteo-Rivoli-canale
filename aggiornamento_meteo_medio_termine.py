@@ -125,47 +125,58 @@ def ottieni_fascia_oraria(ora):
 
 def get_cielo_prevalente(hours, cc_tot, cc_low, cc_mid, cc_high):
     if not hours: return "sereno"
-    states = []
-    for h in hours:
-        cc = cc_tot[h] if h < len(cc_tot) else 0
-        low = cc_low[h] if h < len(cc_low) else 0
-        mid = cc_mid[h] if h < len(cc_mid) else 0
-        
-        if cc < 10: states.append("sereno")
-        elif low < 15 and mid < 15:
-            if cc <= 15: states.append("sereno")
-            elif cc <= 50: states.append("poco nuvoloso per velature")
-            elif cc <= 80: states.append("parzialmente nuvoloso per nubi alte")
-            else: states.append("cielo velato o coperto da nubi alte")
-        else:
-            if cc <= 10: states.append("sereno")
-            elif cc <= 30: states.append("poco nuvoloso")
-            elif cc <= 60: states.append("irregolarmente nuvoloso")
-            elif cc <= 85: states.append("molto nuvoloso")
-            else: states.append("coperto")
-    return Counter(states).most_common(1)[0][0] if states else "sereno"
+    
+    # Calcolo delle medie aritmetiche della copertura per il blocco orario
+    avg_cc = sum(cc_tot[h] for h in hours if h < len(cc_tot) and cc_tot[h] is not None) / len(hours)
+    avg_low = sum(cc_low[h] for h in hours if h < len(cc_low) and cc_low[h] is not None) / len(hours)
+    avg_mid = sum(cc_mid[h] for h in hours if h < len(cc_mid) and cc_mid[h] is not None) / len(hours)
+    
+    if avg_cc < 10: return "sereno"
+    elif avg_low < 15 and avg_mid < 15:
+        if avg_cc <= 15: return "sereno o al più poco nuvoloso per velature"
+        elif avg_cc <= 30: return "poco nuvoloso per velature"
+        elif avg_cc <= 50: return "parzialmente nuvoloso per velature"
+        elif avg_cc <= 70: return "irregolarmente nuvoloso per velature a tratti estese"
+        elif avg_cc <= 90: return "molto nuvoloso per estese velature"
+        else: return "coperto da nubi alte"
+    else:
+        if avg_cc <= 10: return "sereno"
+        elif avg_cc <= 30: return "poco nuvoloso"
+        elif avg_cc <= 50: return "parzialmente nuvoloso"
+        elif avg_cc <= 70: return "irregolarmente nuvoloso"
+        elif avg_cc <= 90: return "molto nuvoloso"
+        else: return "coperto"
 
 def interpella_groq(dati_testuali, oggi_str, giorni_str):
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key: return "Errore: GROQ_API_KEY non trovata."
     client = Groq(api_key=api_key)
     
-    prompt = f"""
+    prompt = f'''
     Sei un meteorologo professionista. Scrivi un bollettino discorsivo, fluido ed elegante per Rivoli a MEDIO TERMINE.
     Ti fornirò i "fatti salienti" generati da algoritmi matematici.
     
     REGOLE FERREE (PENA IL FALLIMENTO):
-    1. TITOLO E IMPAGINAZIONE: Inizia ESATTAMENTE con: <b>Aggiornamento meteo a medio termine di {oggi_str}</b>. Lascia TASSATIVAMENTE una riga vuota (usa un doppio 'a capo') tra il titolo e il primo paragrafo.
-    2. STRUTTURA: Tre paragrafi totali, uno per {giorni_str[2]}, uno per {giorni_str[3]}, uno per {giorni_str[4]}. Lascia ESATTAMENTE una riga vuota tra i paragrafi.
-    3. STILE TEMPERATURE E DISAGIO CALDO: Usa il singolare senza indicare gli orari. Scrivi i valori termici SEMPRE staccando l'unità di misura (es. "20 °C" e NON "20°C"). DEVI INCLUDERE l'emoji del disagio copiandola dai dati. Se c'è l'avviso "(possibili gelate)", copialo testualmente dopo la minima.
+    1. STRUTTURA VISIVA E IMPAGINAZIONE: Devi rispettare in modo ASSOLUTO questo esatto schema di formattazione. Usa ESATTAMENTE gli spazi indicati qui sotto, senza incollare i testi e senza aggiungere ulteriori righe vuote:
+
+<b>Aggiornamento meteo a medio termine di {oggi_str}</b>
+
+[Scrivi qui il paragrafo di {giorni_str[2]}]
+
+[Scrivi qui il paragrafo di {giorni_str[3]}]
+
+[Scrivi qui il paragrafo di {giorni_str[4]}]
+
+    2. CONTENUTO PARAGRAFI: INIZIA SEMPRE ogni paragrafo citando il giorno e la data (es. "{giorni_str[2]}, ").
+    3. STILE TEMPERATURE E DISAGIO CALDO: Subito dopo la data, per esprimere le temperature usa TASSATIVAMENTE questa struttura al singolare: "la temperatura minima sarà di X °C, mentre la massima raggiungerà i Y °C". Scrivi i valori termici SEMPRE staccando l'unità di misura (es. "20 °C"). DEVI INCLUDERE l'emoji del disagio termico copiandola dai dati (es. "con un disagio marcato 🟠"). Se c'è l'avviso "(possibili gelate)", copialo testualmente dopo la minima.
     4. CIELO E NEBBIA: Non usare MAI l'avverbio "prevalentemente", usa sempre "in prevalenza". Se nei dati è indicata la nebbia, integrala in maniera fluida con la descrizione della nuvolosità (es. "Al mattino saranno possibili banchi di nebbia, che lasceranno spazio a un cielo in prevalenza poco nuvoloso...").
-    5. STILE VENTO E DISAGIO FREDDO: Se nei dati leggi "La ventilazione sarà blanda", scrivi ESATTAMENTE questo. Se è forte, aggancia fluidamente l'emoji e il disagio da freddo al vento se indicato.
+    5. STILE VENTO E DISAGIO FREDDO: Se nei dati leggi "La ventilazione sarà blanda" o "La ventilazione sarà da blanda a moderata", scrivi ESATTAMENTE questo. Se è forte, aggancia fluidamente l'emoji e il disagio da freddo al vento se indicato.
     6. DIVIETO COMMENTI SOGGETTIVI: NON usare MAI espressioni romanzate come "condizioni ideali" o "giornata scomoda". Mantieni un tono tecnico e fattuale. NESSUN asterisco o markdown. Usa un linguaggio naturale per integrare le varie fasi di precipitazione fornite nei dati.
-    7. QUALITÀ DELL'ARIA E SABBIA: Se presente l'avviso per aria inquinata o depositi di sabbia sulle superfici esposte, riportalo testualmente in modo asciutto alla fine.
+    7. QUALITÀ DELL'ARIA E SABBIA: Se presente l'avviso per aria inquinata o depositi di sabbia sulle superfici esposte, riportalo testualmente in modo asciutto alla fine del rispettivo paragrafo.
     
     DATI DA TRASFORMARE:
     {dati_testuali}
-    """
+    '''
     try:
         res = client.chat.completions.create(messages=[{"role": "user", "content": prompt}], model="llama-3.3-70b-versatile", temperature=0.25)
         return res.choices[0].message.content
@@ -347,8 +358,9 @@ def main():
     for g in target_days:
         dg = dati_giorni[g]
         
-        h_mat = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 6 <= datetime.fromisoformat(orari[i]).hour < 13]
-        h_pom = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 13 <= datetime.fromisoformat(orari[i]).hour < 19]
+        # Le fasce orarie sono state modificate per prendere: mattino (6-12) e pomeriggio (13-19)
+        h_mat = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 6 <= datetime.fromisoformat(orari[i]).hour <= 12]
+        h_pom = [i for i in indici_validi if (datetime.fromisoformat(orari[i]).date() - dt_oggi.date()).days == g and 13 <= datetime.fromisoformat(orari[i]).hour <= 19]
         c_mat = get_cielo_prevalente(h_mat, cc_tot, cc_low, cc_mid, cc_high)
         c_pom = get_cielo_prevalente(h_pom, cc_tot, cc_low, cc_mid, cc_high)
         
