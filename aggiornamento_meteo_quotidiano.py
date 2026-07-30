@@ -444,7 +444,7 @@ def main():
                 txt_vento += f" Intensificazione a partire da {ottieni_fascia_oraria(dg['ora_inizio_vento'])} (ore {dg['ora_inizio_vento']}), in attenuazione {ottieni_fascia_oraria(dg['ora_fine_vento'])} (ore {dg['ora_fine_vento']})."
             else:
                 txt_vento += f" Breve rinforzo isolato {ottieni_fascia_oraria(dg['ora_inizio_vento'])} (ore {dg['ora_inizio_vento']})."
-            txt_vento += f" Le raffiche massime previste {ottieni_fascia_oraria(dg['ora_w_gst_max'])} saranno attorno ai {arrotonda_tondo(dg['w_gst_max'])} km/h."
+            txt_vento += f" Le raffiche massime previste {ottieni_fascia_oraria(dg['ora_w_gst_max'])} saranno attorno ai {arrotonda_intero(dg['w_gst_max'])} km/h."
         elif dg['w_gst_max'] >= 30:
             txt_vento = "La ventilazione sarà da blanda a moderata."
         else:
